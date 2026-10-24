@@ -439,6 +439,11 @@ sistema, no por lectura de código.
 | 24 | La base crecia sin limite | Cada snapshot en vivo pesa ~90 KB y se escribia uno nuevo cada vez que cambiaba el dato; `SessionSnapshot` no se recortaba nunca (181 filas y 19 MB en una tarde) | `trim_history()` recorta los snapshots **en vivo** a los ultimos 200. Los historicos no se tocan: hay uno por sesion |
 | 29 | En la clasificación no se veía cuánto faltaba para que terminara | El feed publica `SessionInfo.EndDate` (hora local del circuito) y `GmtOffset`, pero el backend no lo exponía como "fin de sesión" y la interfaz no lo mostraba | `SessionInfo.end_time_utc` ya se calculaba; se expone en el store (`sessionEndAt` / `sessionEndsInMs`) y se muestra un contador **FINALIZA EN hh:mm:ss** en la cabecera de la clasificación, en rojo cuando faltan menos de 5 minutos |
 | 30 | Los dos relojes de la interfaz podían desfasarse | La cabecera y la clasificación llevaban cada una su propio `setInterval` | Se extrajo un reloj compartido (`composables/useClock.ts`) con un único intervalo para toda la app |
+| 34 | El sitio desplegado abría el **diálogo nativo del navegador** para pedir usuario y contraseña | nginx con `auth_basic`: el diálogo es del navegador, en inglés, fuera del tema de la app y sin forma de cerrar sesión | Login propio de la aplicación (§15): la pantalla de acceso es un panel de la app y la protección la aplica nginx con `auth_request` |
+| 35 | La cookie de sesión no se podía firmar | `DJANGO_SECRET_KEY=` vacío en el `.env` **sí** cuenta como variable definida: `os.environ.get(...)` devuelve `""` y no el valor por defecto | La clave toma el valor por defecto cuando la variable está vacía. Con la clave vacía, Django no revienta al arrancar sino al firmar (mas dificil de ver) |
+| 36 | El campeonato no mostraba equipos y los podios salían en 0 | El endpoint de standings de Jolpica trae el equipo en `Constructors` (**lista**, el actual es el último) y **no** trae podios; el standings de constructores va en otro endpoint | Se parsea la lista, se piden los constructores aparte y los podios quedan en `None` (se dibujan "—", nunca 0) |
+| 37 | El snapshot histórico se caía al pedir posiciones | El código nuevo de `get_positions` usaba `LOCATION_TIMEOUT_SECONDS`, que no estaba definido | Se.define la constante (120 s: son varios MB por piloto) y se actualizan los tests para el pedido por piloto |
+| 38 | Ordenar la clasificación por neumático rompía la tabla | En `ClassificationTable.vue` la función de ordenamiento llamaba `compoundOf(a)`, pero `a` no existe en ese ámbito (la entrada se llama `entry`) | `compoundOf(entry)`. Era un `ReferenceError` en vivo: solo se veía al ordenar por neumático |
 
 ### Entorno
 
@@ -473,16 +478,18 @@ Chrome DevTools MCP, sobre el dashboard real con datos de Austin 2026, en
 cd backend && ./.venv/bin/python -m pytest
 ```
 
-**89 pruebas en verde.** Reparto:
+**106 pruebas en verde.** Reparto:
 
 | Archivo | Qué cubre |
 |---|---|
-| `test_normalization.py` | Formato real del feed: sectores, gaps, `Stats` (dict y lista), mejor vuelta por segmento, posiciones GPS, `None` vs `0` |
+| `test_normalization.py` | Formato real del feed: sectores, gaps, `Stats` (dict y lista), mejor vuelta por segmento, posiciones GPS (por piloto, en paralelo), `None` vs `0` |
 | `test_manager.py` | Selección por semántica, prioridad, fallback |
 | `test_api.py` | Endpoints de la API interna |
 | `test_persistence.py` | Modelos, deduplicación, fingerprint, ámbito del snapshot |
 | `test_rate_limit.py` | Cadencia de health check, `retry-after`, cooldown, degradación |
 | `test_weather.py` | Previsión: coordenadas, códigos de tiempo, ventana de sesión |
+| `test_auth.py` | Login propio: sesión, cookie `HttpOnly`, 401 **sin** `WWW-Authenticate`, freno de fuerza bruta, cookie inventada |
+| `test_analysis.py` | Deltas por sector, delta contra otra sesión, sector ausente (`None`), campeonato de Jolpica |
 
 Las tres reglas duras tienen prueba propia: **un pedido live no se resuelve
 con un proveedor histórico**, **ausencia ≠ cero**, y **un snapshot incompleto
@@ -515,6 +522,13 @@ no es un fallo**.
    pero queda medir el tiempo de descarga del endpoint completo.
 5. Documentar en `docs/providers.md` la Incorporación de una API nueva como
    guía práctica (ya está el esqueleto del adaptador).
+6. **Rotar los secretos que quedaron a la vista**: el token de la API de
+   Coolify y la contraseña del sitio se imprimieron en el chat durante el
+   despliegue. El token se regenera en Coolify; la contraseña se cambia en las
+   variables de entorno de la aplicación.
+7. **Evolución de posiciones por vuelta**: OpenF1 tiene `/position` (70 filas
+   en la quali de Austin), con lo que se puede ver el cambio de posición de
+   cada piloto vuelta a vuelta. Queda fuera de esta entrega.
 
 ### Resuelto en esta sesion
 
@@ -579,9 +593,9 @@ nixpacks, así que el aviso no es teórico.
 |---|---|
 | `Dockerfile` | Build multi-etapa: frontend (node) + dependencias del proveedor (node) + runtime (Python 3.12 + Node 22 + nginx + supervisor) |
 | `deploy/nginx.conf` | Configuración principal de nginx |
-| `deploy/nginx-site.conf.template` | El vhost: SPA + proxy de `/api` + protección opcional con usuario |
+| `deploy/nginx-site.conf` | El vhost: SPA + proxy de `/api` + comprobación de sesión con `auth_request` |
 | `deploy/supervisord.conf` | Los cuatro procesos |
-| `deploy/entrypoint.sh` | htpasswd, migraciones y arranque |
+| `deploy/entrypoint.sh` | Migraciones y arranque (ya no genera el `.htpasswd`: el login es de la app) |
 | `.dockerignore` | Excluye `.run/` (donde vive el token de Coolify), `.env`, `node_modules` y la base local |
 
 ### Variables de entorno en Coolify
@@ -596,7 +610,8 @@ nixpacks, así que el aviso no es teórico.
 | `LAN_ALLOWED_ORIGINS` | `https://<dominio>` | Orígenes CORS |
 | `TRUST_PROXY_SSL` | `true` | Detrás del proxy que termina TLS |
 | `F1_LIVETIMING_URL` | `http://127.0.0.1:3000` | El proveedor, dentro del contenedor |
-| `RACE_CENTER_USER` / `RACE_CENTER_PASSWORD` | (a definir) | Si están vacíos, el sitio se sirve **sin** protección |
+| `RACE_CENTER_USER` / `RACE_CENTER_PASSWORD` | (definidos) | Con ellos la API pide sesión: el login es de la app (§15). Si están vacíos, el sitio se sirve **sin** protección |
+| `RACE_CENTER_SESSION_DAYS` | `30` | Duración de la cookie de sesión |
 | `OPENF1_API_KEY` | (vacío) | El live de OpenF1 es de pago |
 
 El dominio: `https://race-center.186-5-245-12.sslip.io`. Comprobado que
@@ -626,9 +641,162 @@ proxy de nginx, y la base en `/data` (con sus archivos WAL).
 | 32 | nginx no arrancaba: `"types" directive is not allowed here in /etc/nginx/mime.types` | El `include mime.types` estaba en el nivel principal de nginx | Se movió dentro del bloque `http {}` |
 | 33 | 40 s perdidos en cada arranque | El entrypoint esperaba a que el proveedor respondiera en el puerto 3000, pero **ese proceso lo arranca supervisor, después** | El entrypoint no espera: la ingesta ya sabe esperar (estado `WAITING` hasta que el proveedor conecta) |
 
+### La API de Coolify 4.5: cinco cosas que no se deducen
+
+Todo esto se descubrió probando y leyendo los errores de validación (que son
+útiles: enumeran los campos no permitidos).
+
+| Qué | Cómo es en realidad |
+|---|---|
+| Crear la aplicación | `POST /api/v1/applications` **no existe** (404). El que funciona es `POST /api/v1/applications/public` (repo público) |
+| El repositorio | En `/public`, `git_repository` va como **texto** (`"https://github.com/oscarvogel/f1-race-control"`), no como objeto. Con el objeto, la validación pasa y después la API revienta con **500** |
+| Los dominios | El campo es `domains` (o `fqdn`); `fqdn` en el alta da error: *"Use the domains field to set application URLs"* |
+| El servidor | `server_uuid` (no `server_id`), y además `project_uuid` y `environment_name` son obligatorios |
+| Las variables | El payload mínimo es `{"key": "...", "value": "..."}`. `is_build_time`, `is_required`, `is_shared`... **no están permitidos** en el alta (sí en el PATCH) |
+| El volumen | `mounts` **no se acepta** en el PATCH de la app. El endpoint correcto es `POST /api/v1/applications/{uuid}/storages` con `{"name": ..., "mount_path": "/data", "type": "persistent"}` |
+| El health check | Con `health_check_host: localhost`, Traefik no enruta la comprobación (responde 404) y la app queda `exited:unhealthy`. Con el **dominio** como host, funciona |
+
+Los errores de validación de la API son la herramienta: cada 422 dice
+exactamente qué campo sobra o falta.
+
+### Lo que quedó desplegado
+
+- **URL**: <https://race-center.186-5-245-12.sslip.io> (certificado Let's
+  Encrypt válido; el proxy de Coolify ya emitía certificados para dominios
+  `sslip.io` en esta instancia).
+- **Protección**: login propio de la aplicación (§15). La API exige una
+  cookie de sesión válida; sin ella responde **401**. El diálogo nativo del
+  navegador (HTTP basic) se eliminó: se veía fuera del tema de la app.
+- **Datos**: 11 variables de entorno (secrets en Coolify, nunca en el repo).
+- **Volumen**: `/data` persistente para el SQLite, para que el histórico y el
+  catálogo no se pierdan al redesplegar.
+- **Verificado**: los cuatro procesos `RUNNING` en el servidor, el proveedor
+  conectado al feed de la F1 desde el contenedor, la ingesta escribiendo
+  snapshots (22 pilotos) y el dashboard sirviendo la clasificación final de
+  la quali con gaps y neumáticos.
+
+> El repositorio de GitHub es **público**: el código se ve, los datos no
+> (el feed de la F1 no se redistribuye y el sitio está con contraseña).
+
+### Lo que NO se puede pedir por API
+
+El **volumen persistente** sí se pudo crear por API (endpoint `storages`), pero
+en general hay cosas que en Coolify solo se tocan desde la UI. Si alguna vez
+hace falta, la vía es: iniciar sesión en la interfaz y cargar el campo desde
+la sesión del navegador (el token de API no alcanza para eso).
+
 ---
 
-## 14. Cómo seguir
+## 14. Acceso al sitio: login propio de la aplicación
+
+### El problema
+
+El sitio estaba protegido con HTTP basic de nginx. Funcionaba, pero al abrirlo
+el navegador sacaba **su propio diálogo**: en inglés, con los controles del
+navegador, fuera del tema de la app y sin forma de cerrar sesión. Para una
+aplicación que tiene su propio diseño, era un remiendo visible.
+
+### La solución
+
+El login pasó a ser de la aplicación y la protección siguió estando en el
+borde:
+
+| Capa | Qué hace |
+|---|---|
+| `frontend/src/components/LoginScreen.vue` | La pantalla de acceso: panel oscuro, en español, con mostrar/ocultar contraseña y botón "Salir" en la cabecera |
+| `backend/core/auth.py` | Verifica la credencial contra el entorno, firma la cookie de sesión y expone `/api/auth/{login,logout,session,check}` |
+| `deploy/nginx-site.conf` | `auth_request` contra `/api/auth/check/`: antes de dejar pasar una petición a la API, nginx pregunta si la sesión es válida |
+| `core.auth.SessionAuthMiddleware` | Defensa en profundidad: el backend tampoco confía en que el filtro del borde esté bien puesto |
+
+El detalle que hace que desaparezca el diálogo del navegador: **el 401 no
+lleva `WWW-Authenticate`**. Si lo llevara, el navegador abriría su ventana
+nativa; sin ese encabezado, el 401 viaja al JavaScript de la app, que pinta su
+propia pantalla de acceso.
+
+Con esto el sitio se ve como el resto de la aplicación, con HTTPS, y la API
+sigue sin quedar expuesta: sin cookie válida, `/api/...` responde 401.
+
+### Details que importan
+
+- **La credencial no se guarda**: se compara en tiempo constante
+  (`secrets.compare_digest`) con `RACE_CENTER_USER` / `RACE_CENTER_PASSWORD`.
+  No hay tabla de usuarios en la base.
+- **La sesión es una cookie firmada** con el `SECRET_KEY` de Django, con
+  vencimiento (30 días por defecto), `HttpOnly` y `SameSite=Lax`. El
+  atributo `Secure` se pone solo si la petición llegó por HTTPS: puesto
+  siempre, entrar por HTTP "funciona" pero la API responde 401 después.
+- **Freno de fuerza bruta**: 8 intentos fallidos por IP en 5 minutos; a partir
+  de ahí, 429.
+- **Sin credenciales configuradas** (desarrollo local) no se pide nada: la
+  API queda abierta, igual que antes.
+
+### Verificación
+
+Con el contenedor local (`bash .run/docker_test.sh`):
+
+- `GET /` → **200** (el SPA se sirve; el que decide es la cookie).
+- `GET /api/health/` sin cookie → **401**, y **sin** `WWW-Authenticate` (se
+  comprueba en el propio script: es el requisito que evita el diálogo).
+- Login con contraseña incorrecta → **401**.
+- Login correcto → cookie de sesión; con ella, la API responde **200**.
+- `/api/ping/` (health check de Coolify) → **200** sin cookie.
+- Logout → la cookie se borra y la API vuelve a pedir sesión.
+
+---
+
+## 15. Comparaciones: análisis por sectores y campeonato
+
+### Qué se construyó y por qué
+
+La pregunta era qué se puede comparar **con datos reales** una vez terminada
+la sesión. La respuesta corta: el feed en vivo no alcanza para comparar
+vueltas, pero OpenF1 sí.
+
+| Panel | Qué muestra | De dónde sale |
+|---|---|---|
+| **Análisis** | La mejor vuelta de cada piloto con sus tres sectores, el Δ contra el más rápido y el Δ **sector por sector** contra el piloto que se elija; además, el Δ de la vuelta contra otra sesión (por ejemplo, FP3) | OpenF1 `/laps` + `/stints` |
+| **Campeonato** | La tabla de pilotos y de constructores de la temporada, con puntos, victorias y rezago | Jolpica `/driverstandings.json` y `/constructorstandings.json` |
+
+### Por qué el feed en vivo no sirve para el análisis
+
+El feed publica `Sectors` de la **última vuelta** de cada piloto, y esos
+sectores **no suman** su mejor vuelta. En OpenF1, los sectores de la mejor
+vuelta sí suman **exactamente** el tiempo de esa vuelta (comprobado: ANTONELLI
+25.310 + 37.297 + 31.428 = 94.035 = 1:34.035). Sin esa propiedad, comparar
+sectores entre pilotos no significa nada.
+
+### Decisiones de alcance
+
+- **El delta se calcula en el backend**, no en el navegador: el frontend
+  elige el piloto de referencia y recibe los deltas ya calculados. Cambiar la
+  referencia no vuelve a golpear OpenF1 (los datos crudos están cacheados).
+- **Los combos de la sesión y del piloto son con búsqueda** (`SearchSelect`):
+  se escribe, se filtra y se elige una opción real. Si el texto no coincide
+  con ninguna opción, no se guarda nada.
+- **El campeonato se etiqueta honestamente**: "Clasificación tras la ronda 17:
+  la ronda 18 (Austin) todavía no suma puntos hasta que se disputa la
+  carrera". Austin es la ronda 18 de 2026 y no hay puntos de ella hasta el
+  domingo.
+- **Lo que NO se construyó** (y por qué): el análisis de estrategia de
+  neumáticos en la clasificación (una sola parada por piloto, no hay nada que
+  comparar) y la evolución de posiciones por vuelta (los datos están en
+  OpenF1 `/position`, queda como opción).
+
+### Endpoints
+
+```
+GET /api/analysis/sectors/<session_key>/?reference=<piloto>&compare=<sesion>
+GET /api/championship/?season=<año>
+```
+
+Los datos crudos de cada sesión (mejor vuelta por piloto + ficha de pilotos) y
+el campeonato se cachean **en memoria y en la base** (una sesión terminada no
+cambia). La clave de la cache lleva una versión (`v2`): al cambiar el formato
+del payload, la base no sigue sirviendo el viejo.
+
+---
+
+## 16. Cómo seguir
 
 ```bash
 cd /mnt/c/Programacion/proyectos/actives/f1-race-center

@@ -25,10 +25,18 @@ suscripciones ni planes de usuario.
   condiciones previstas para la próxima sesión, separada del clima observado.
 - Permite elegir cualquier sesión del Gran Premio (FP1, FP2, FP3, Sprint,
   Clasificación, Carrera) y ver sus estadísticas completas.
+- **Panel de análisis**: la mejor vuelta de cada piloto con sus tres sectores,
+  el Δ contra el más rápido y el Δ sector por sector contra el piloto que se
+  elija; además, el Δ de la vuelta contra otra sesión (por ejemplo, FP3).
+- **Panel de campeonato**: la tabla de pilotos y de constructores de la
+  temporada, con puntos, victorias y rezago, indicando en qué ronda está.
 - Panel de diagnóstico con el estado real de cada proveedor: conexión,
   latencia, edad del último dato, último error y reconexiones.
 - Vista del circuito con la posición de cada auto, sobre el trazado real
   derivado de las posiciones GPS del propio circuito.
+- **Acceso propio**: si hay credenciales configuradas, el sitio pide usuario
+  y contraseña con una pantalla de la propia aplicación (no el diálogo del
+  navegador) y la API exige una sesión válida.
 
 ## Stack
 
@@ -57,6 +65,59 @@ Luego abrir **http://127.0.0.1:5174**.
 | Frontend | http://127.0.0.1:5174 |
 | API interna | http://127.0.0.1:8000/api/ |
 | Proveedor live | http://127.0.0.1:3000/api/ |
+
+## Despliegue en contenedor (Coolify)
+
+La misma app corre como **un solo contenedor** con cuatro procesos:
+
+| Proceso | Qué hace | Escucha en |
+|---|---|---|
+| `nginx` | sirve el SPA y hace proxy de `/api` | `0.0.0.0:80` (único puerto) |
+| `backend` | Django con gunicorn | `127.0.0.1:8000` |
+| `ingest` | `manage.py ingest_live --interval 3` | — |
+| `live` | proveedor Node de cronometraje | `127.0.0.1:3000` |
+
+El proveedor del feed de la F1 **no** queda expuesto: escucha en loopback
+dentro del contenedor, igual que en local.
+
+```bash
+docker build -t race-center:local .
+docker run -d --name race-center -p 8080:80 -v race-center-data:/data \
+  -e DJANGO_SECRET_KEY=cambiar \
+  -e RACE_CENTER_USER=piloto -e RACE_CENTER_PASSWORD=cambiar \
+  race-center:local
+```
+
+En Coolify, la aplicación debe usar el build pack **`Dockerfile`**: con
+Nixpacks, Coolify genera su propio Dockerfile e ignora el del repositorio, y
+el contenedor levantaría sin el proveedor de cronometraje.
+
+Variables de entorno (los valores exactos están en `docs/BITACORA.md` §13):
+
+| Variable | Para qué |
+|---|---|
+| `DJANGO_SECRET_KEY` | clave de Django |
+| `DJANGO_DB_PATH` | ruta del SQLite (en el contenedor, el volumen `/data`) |
+| `APP_DEBUG` | `false` |
+| `ENABLE_LAN_ACCESS` / `LAN_ALLOWED_HOSTS` / `LAN_ALLOWED_ORIGINS` | hosts y orígenes del dominio |
+| `TRUST_PROXY_SSL` | `true` detrás del proxy que termina TLS |
+| `F1_LIVETIMING_URL` | `http://127.0.0.1:3000` (el proveedor, dentro del contenedor) |
+| `RACE_CENTER_USER` / `RACE_CENTER_PASSWORD` | protección del sitio: sin ellos se sirve **sin** contraseña (modo desarrollo) |
+| `RACE_CENTER_SESSION_DAYS` | duración de la cookie de sesión (30 días) |
+
+### Acceso al sitio
+
+La protección la aplica **nginx** con `auth_request`: antes de dejar pasar una
+petición a la API, le pregunta a Django (`/api/auth/check/`) si la cookie de
+sesión es válida. El backend tiene además su propio filtro
+(`core.auth.SessionAuthMiddleware`), por si el borde se configura mal.
+
+El 401 **no** lleva `WWW-Authenticate`: si lo llevara, el navegador abriría su
+diálogo nativo. Sin ese encabezado, la pantalla de acceso es un panel de la
+propia aplicación, en español y con el tema oscuro, y el botón "Salir" de la
+cabecera cierra la sesión.
+
+Detalle completo en [`docs/BITACORA.md`](docs/BITACORA.md) §14.
 
 > El puerto del frontend es **5174** y no 5173 porque en esta máquina el 5173
 > ya lo ocupa otro proyecto (`0.0.0.0:5173` en Windows). Se cambia en

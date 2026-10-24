@@ -211,6 +211,8 @@ export interface Diagnostics {
 
 export interface Snapshot {
   found?: boolean
+  /** Motivo por el que no hay datos (cuando ``found`` es false). */
+  reason?: string
   generated_at: string
   data_state: DataState
   scope: string
@@ -319,4 +321,132 @@ export interface ForecastWindow {
   session_type?: string
   start_time_utc?: string | null
   end_time_utc?: string | null
+}
+
+/* ------------------------------------------------------------------------- *
+ * Analisis post-sesion: sectores de la mejor vuelta
+ * ------------------------------------------------------------------------- */
+
+/** Un sector de la mejor vuelta, con su delta contra el mas rapido y el de referencia. */
+export interface AnalysisSector {
+  index: number
+  time: number | null
+  display: string | null
+  /** Diferencia contra el mejor sector de la sesion (negativo = mas rapido). */
+  delta_to_fastest: number | null
+  /** Diferencia contra el piloto de referencia (negativo = mas rapido). */
+  delta_to_reference: number | null
+  /** Es el mejor sector de la sesion. */
+  is_fastest: boolean
+}
+
+/** La misma sesion, vista desde la sesion de comparacion. */
+export interface AnalysisCompare {
+  session_key: string
+  lap_time: number | null
+  lap_time_display: string | null
+  compound: string | null
+  /** Positivo = en la sesion analizada fue mas lento que en la comparada. */
+  delta_lap: number | null
+  delta_display: string | null
+  sector_deltas: { index: number; delta: number | null }[]
+}
+
+/** Una fila del analisis: un piloto y su mejor vuelta. */
+export interface AnalysisRow {
+  driver_number: string
+  code: string | null
+  full_name: string | null
+  team: string | null
+  team_colour: string | null
+  position: number
+  lap_number: number | null
+  lap_time: number | null
+  lap_time_display: string | null
+  delta_to_fastest: number | null
+  delta_display: string | null
+  sectors: AnalysisSector[]
+  compound: string | null
+  tyre_age: number | null
+  is_pit_out_lap: boolean
+  i1_speed: number | null
+  i2_speed: number | null
+  compare: AnalysisCompare | null
+}
+
+export interface AnalysisSession {
+  provider_id?: string
+  session_key?: string
+  session_name?: string | null
+  session_type?: string | null
+  meeting_name?: string | null
+  circuit_name?: string | null
+  season?: string | null
+  start_time_utc?: string | null
+  end_time_utc?: string | null
+}
+
+export interface SectorAnalysis {
+  found: boolean
+  error?: string
+  generated_at?: string
+  session_key: string
+  session: AnalysisSession | null
+  source: string
+  fastest: {
+    driver_number: string
+    lap_time: number | null
+    lap_time_display: string | null
+  } | null
+  reference_driver: string | null
+  reference: {
+    driver_number: string
+    lap_time: number | null
+    lap_time_display: string | null
+  } | null
+  compare_session: {
+    session_key: string
+    session: AnalysisSession | null
+    found: boolean
+  } | null
+  rows: AnalysisRow[]
+}
+
+/* ------------------------------------------------------------------------- *
+ * Campeonato
+ * ------------------------------------------------------------------------- */
+
+export interface DriverStanding {
+  position: number
+  driver_number: string
+  code: string | null
+  full_name: string | null
+  country_code: string | null
+  team: string | null
+  points: number
+  wins: number
+  /** El endpoint de standings no publica los podios: puede venir null. */
+  podiums: number | null
+  /** Puntos de menos que el lider (negativo). */
+  gap_to_leader: number | null
+}
+
+export interface TeamStanding {
+  position: number
+  team: string | null
+  country_code: string | null
+  points: number
+  wins: number
+  gap_to_leader: number | null
+}
+
+export interface Championship {
+  found: boolean
+  error?: string
+  season: number
+  round: number | null
+  note?: string
+  source: string
+  drivers: DriverStanding[]
+  teams: TeamStanding[]
 }

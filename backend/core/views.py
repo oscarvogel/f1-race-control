@@ -156,8 +156,14 @@ def providers_status(request):
 
 @require_GET
 def sessions(request):
-    """Sesiones conocidas, de la mas reciente a la mas antigua."""
-    queryset = Session.objects.all()
+    """Sesiones conocidas, de la mas reciente a la mas antigua.
+
+    Las filas internas de cache (el analisis de sectores y el campeonato se
+    guardan en la misma tabla) no son sesiones de carrera: no se listan.
+    """
+    from .analysis import DERIVED_PROVIDER
+
+    queryset = Session.objects.exclude(provider_id=DERIVED_PROVIDER)
     session_type = request.GET.get("type")
     if session_type:
         queryset = queryset.filter(session_type__iexact=session_type)
@@ -641,4 +647,82 @@ def historical_snapshot(request, session_key: str):
             payload["_snapshot_id"] = snapshot.id
             payload["_session_pk"] = snapshot.session_id
     payload["found"] = True
+    return _json(payload)
+
+
+# --------------------------------------------------------------------------- #
+# Analisis post-sesion: sectores y campeonato
+# --------------------------------------------------------------------------- #
+
+
+@require_GET
+def analysis_sectors(request, session_key: str):
+    """Analisis por sectores de una sesion.
+
+    Devuelve la mejor vuelta de cada piloto con sus tres sectores, el delta
+    contra el mas rapido y el delta sector por sector contra el piloto de
+    referencia. Con ``compare`` se agrega la diferencia contra la mejor vuelta
+    de la otra sesion (por ejemplo, FP3 contra Clasificacion).
+
+    Los datos vienen de OpenF1 (``/laps``), que es la unica fuente donde los
+    sectores **suman** la vuelta: el feed en vivo solo publica los sectores de
+    la ultima vuelta de cada piloto.
+    """
+    from providers.base import ProviderError
+
+    from .analysis import build_sector_analysis
+
+    reference = request.GET.get("reference") or None
+    compare = request.GET.get("compare") or None
+
+    try:
+        payload = build_sector_analysis(str(session_key), reference, compare)
+    except ProviderError as exc:
+        return _json(
+            {
+                "found": False,
+                "session_key": str(session_key),
+                "rows": [],
+                "error": str(exc),
+                "source": settings.HISTORICAL_PROVIDER,
+            }
+        )
+    except Exception as exc:
+        logger.warning("Fallo el analisis de sectores de %s: %s", session_key, exc)
+        return _json(
+            {
+                "found": False,
+                "session_key": str(session_key),
+                "rows": [],
+                "error": str(exc),
+                "source": settings.HISTORICAL_PROVIDER,
+            }
+        )
+    return _json(payload)
+
+
+@require_GET
+def championship(request):
+    """Clasificacion del campeonato de pilotos y de constructores.
+
+    Fuente Jolpica: OpenF1 no publica campeonato. El payload dice en que
+    ronda esta la tabla, para no hacer creer que ya sumo Austin.
+    """
+    from providers.base import ProviderError
+
+    from .analysis import build_championship
+
+    raw_season = request.GET.get("season")
+    try:
+        season = int(raw_season) if raw_season else None
+    except ValueError:
+        season = None
+
+    try:
+        payload = build_championship(season)
+    except ProviderError as exc:
+        return _json({"found": False, "drivers": [], "teams": [], "error": str(exc)})
+    except Exception as exc:
+        logger.warning("Fallo la consulta del campeonato: %s", exc)
+        return _json({"found": False, "drivers": [], "teams": [], "error": str(exc)})
     return _json(payload)

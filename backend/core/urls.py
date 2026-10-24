@@ -2,11 +2,15 @@
 
 from django.urls import path
 
-from . import views
+from . import auth, views
 
 urlpatterns = [
     path("health/", views.health, name="health"),
     path("ping/", views.ping, name="ping"),
+    path("auth/login/", auth.login, name="auth-login"),
+    path("auth/logout/", auth.logout, name="auth-logout"),
+    path("auth/session/", auth.session, name="auth-session"),
+    path("auth/check/", auth.check, name="auth-check"),
     path("providers/", views.providers, name="providers"),
     path("providers/status/", views.providers_status, name="providers-status"),
     path("meetings/", views.meetings, name="meetings"),
@@ -19,6 +23,12 @@ urlpatterns = [
     ),
     path("sessions/current/", views.sessions_current, name="sessions-current"),
     path("weather/forecast/", views.weather_forecast, name="weather-forecast"),
+    path(
+        "analysis/sectors/<str:session_key>/",
+        views.analysis_sectors,
+        name="analysis-sectors",
+    ),
+    path("championship/", views.championship, name="championship"),
     path("sessions/<int:session_id>/snapshot/", views.session_snapshot, name="session-snapshot"),
     path("sessions/<int:session_id>/timing/", views.session_timing, name="session-timing"),
     path("sessions/<int:session_id>/drivers/", views.session_drivers, name="session-drivers"),

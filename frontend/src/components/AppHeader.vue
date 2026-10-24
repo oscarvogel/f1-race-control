@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Activity, Clock, MapPin, Radio, Settings2, Wifi, WifiOff } from '@lucide/vue'
+import { Activity, Clock, LogOut, MapPin, Radio, Settings2, Wifi, WifiOff } from '@lucide/vue'
 import StatusBadge from './StatusBadge.vue'
 import SessionSelector from './SessionSelector.vue'
 import { useClock } from '@/composables/useClock'
 import { useRaceStore } from '@/stores/race'
+import { useAuthStore } from '@/stores/auth'
 
 const store = useRaceStore()
+const auth = useAuthStore()
 
 /** Reloj compartido con el resto de la interfaz. */
 const now = useClock()
@@ -255,6 +257,18 @@ const officialName = computed(() => store.session?.official_name ?? '')
         >
           <Settings2 class="h-3.5 w-3.5" :stroke-width="2" />
           <span class="hidden sm:inline">Diagnostico</span>
+        </button>
+
+        <!-- Salir: solo aparece si el sitio pide sesion. -->
+        <button
+          v-if="auth.required"
+          type="button"
+          class="flex items-center gap-1.5 rounded-lg border border-race-700 bg-race-850/80 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400 transition hover:border-accent/60 hover:text-white"
+          :title="auth.username ? `Sesion de ${auth.username}` : 'Salir'"
+          @click="auth.logout()"
+        >
+          <LogOut class="h-3.5 w-3.5" :stroke-width="2" />
+          <span class="hidden sm:inline">Salir</span>
         </button>
 
         <span

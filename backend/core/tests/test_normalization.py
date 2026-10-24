@@ -553,6 +553,9 @@ def test_las_posiciones_historicas_quedan_en_una_fila_por_piloto():
     El endpoint `location` devuelve una fila por piloto e instante (unas
     80.000 por hora). Guardar todo en el snapshot lo infla sin ganar nada:
     para dibujar el mapa alcanza con donde termino cada auto.
+
+    Las posiciones se piden **piloto por piloto** (en paralelo): sin filtro,
+    la sesion entera son ~50 MB y el timeout normal no alcanza.
     """
     import asyncio
 
@@ -565,15 +568,22 @@ def test_las_posiciones_historicas_quedan_en_una_fila_por_piloto():
         {"driver_number": 1, "date": "2026-10-23T17:31:30Z", "x": 300.0, "y": 400.0, "z": 3.0},
         {"driver_number": 1, "date": "2026-10-23T17:32:30Z", "x": 310.0, "y": 410.0, "z": 4.0},
     ]
+    pedidos: list[str] = []
 
-    async def fake_get(path: str, *args, **kwargs):
+    async def fake_get(path: str, params=None, *args, **kwargs):
+        if path == "/drivers":
+            return [{"driver_number": 44}, {"driver_number": 1}]
         assert path == "/location"
-        return filas
+        numero = str((params or {}).get("driver_number") or "")
+        pedidos.append(numero)
+        return [fila for fila in filas if str(fila["driver_number"]) == numero]
 
     provider._get_json = fake_get  # type: ignore[assignment]
 
     posiciones = asyncio.run(provider.get_positions("11389"))
 
+    # Una consulta por piloto, no una por sesion.
+    assert sorted(pedidos) == ["1", "44"]
     assert len(posiciones) == 2
     por_piloto = {p["driver_number"]: p for p in posiciones}
     assert por_piloto["44"]["x"] == pytest.approx(110.0)
@@ -582,6 +592,30 @@ def test_las_posiciones_historicas_quedan_en_una_fila_por_piloto():
     assert por_piloto["1"]["y"] == pytest.approx(410.0)
     # La coordenada viene con su marca de tiempo.
     assert por_piloto["44"]["timestamp"] is not None
+
+
+def test_un_piloto_que_falla_no_tira_abajo_a_los_demas():
+    """Si la consulta de un piloto falla, los otros siguen con posiciones."""
+    import asyncio
+
+    from providers.openf1 import OpenF1Provider
+
+    provider = OpenF1Provider(base_url="http://127.0.0.1:9")
+
+    async def fake_get(path: str, params=None, *args, **kwargs):
+        if path == "/drivers":
+            return [{"driver_number": 44}, {"driver_number": 1}]
+        numero = str((params or {}).get("driver_number") or "")
+        if numero == "44":
+            raise RuntimeError("se cayo la conexion")
+        return [{"driver_number": 1, "date": "2026-10-23T17:32:30Z", "x": 310.0, "y": 410.0}]
+
+    provider._get_json = fake_get  # type: ignore[assignment]
+
+    posiciones = asyncio.run(provider.get_positions("11389"))
+
+    assert [p["driver_number"] for p in posiciones] == ["1"]
+    assert posiciones[0]["x"] == pytest.approx(310.0)
 
 
 def test_una_posicion_sin_coordenadas_no_se_inventa():
@@ -593,7 +627,9 @@ def test_una_posicion_sin_coordenadas_no_se_inventa():
     provider = OpenF1Provider(base_url="http://127.0.0.1:9")
     filas = [{"driver_number": 44, "date": "2026-10-23T17:32:00Z", "x": None, "y": None, "z": None}]
 
-    async def fake_get(path: str, *args, **kwargs):
+    async def fake_get(path: str, params=None, *args, **kwargs):
+        if path == "/drivers":
+            return [{"driver_number": 44}]
         return filas
 
     provider._get_json = fake_get  # type: ignore[assignment]

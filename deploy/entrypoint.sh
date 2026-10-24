@@ -2,10 +2,14 @@
 # Entrypoint de Race Center en el contenedor.
 #
 # Orden importante:
-#   1. Proteccion del sitio (htpasswd) y generacion del vhost de nginx.
-#   2. Migraciones de Django, con el stack todavia detenido.
-#   3. Espera a que el proveedor live se conecte al feed.
-#   4. supervisor levanta los cuatro procesos.
+#   1. Migraciones de Django, con el stack todavia detenido.
+#   2. Espera a que el proveedor live se conecte al feed.
+#   3. supervisor levanta los cuatro procesos.
+#
+# La proteccion del sitio no se configura aqui: la aplica nginx con
+# `auth_request`, consultando a Django (/api/auth/check/). Si no hay
+# credenciales en el entorno, el backend responde 200 siempre y la API queda
+# abierta (modo desarrollo).
 set -euo pipefail
 
 log() { echo "[entrypoint] $*"; }
@@ -15,31 +19,14 @@ export DJANGO_DB_PATH
 log "base de datos: ${DJANGO_DB_PATH}"
 
 # --------------------------------------------------------------------------- #
-# 1. Proteccion con usuario (opcional)
-# --------------------------------------------------------------------------- #
-if [ -n "${RACE_CENTER_USER:-}" ] && [ -n "${RACE_CENTER_PASSWORD:-}" ]; then
-    # La contraseña va por stdin (-i): asi no queda en la lista de procesos.
-    printf '%s\n' "$RACE_CENTER_PASSWORD" \
-        | htpasswd -B -c -i /etc/nginx/.htpasswd "$RACE_CENTER_USER"
-    export RACE_CENTER_AUTH='auth_basic "Race Center"; auth_basic_user_file /etc/nginx/.htpasswd;'
-    log "acceso protegido con usuario"
-else
-    export RACE_CENTER_AUTH=''
-    log "sin proteccion con usuario (RACE_CENTER_USER/PASSWORD vacios)"
-fi
-
-envsubst '${RACE_CENTER_AUTH}' < /app/deploy/nginx-site.conf.template \
-    > /etc/nginx/conf.d/site.conf
-
-# --------------------------------------------------------------------------- #
-# 2. Migraciones (antes de que arranque ningun proceso)
+# 1. Migraciones (antes de que arranque ningun proceso)
 # --------------------------------------------------------------------------- #
 cd /app/backend
 log "aplicando migraciones..."
 python manage.py migrate --noinput
 
 # --------------------------------------------------------------------------- #
-# 3. Todos los procesos
+# 2. Todos los procesos
 #
 # El proveedor live y la ingesta los arranca supervisor. NO se espera aqui a
 # que el proveedor conecte con el feed de la F1: el proveedor todavia no

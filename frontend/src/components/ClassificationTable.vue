@@ -163,7 +163,7 @@ const sorted = computed<TimingEntry[]>(() => {
       case 'laps':
         return entry.number_of_laps
       case 'tyre':
-        return compoundOf(a) ?? ''
+        return compoundOf(entry) ?? ''
       case 'best':
         return entry.best_lap_time
       default:

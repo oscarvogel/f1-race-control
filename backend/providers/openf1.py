@@ -69,6 +69,11 @@ MIN_REQUEST_INTERVAL_SECONDS = 1.0
 MAX_RETRY_AFTER_SECONDS = 90.0
 MAX_ATTEMPTS = 3
 
+# El endpoint `location` devuelve varios MB por piloto (en la FP3 de Austin
+# fueron 2,3 MB y 18.418 filas por piloto), asi que necesita un timeout
+# propio, bastante mas generoso que el del resto de endpoints.
+LOCATION_TIMEOUT_SECONDS = 120.0
+
 _last_request_at = 0.0
 _cooldown_until = 0.0
 
@@ -210,7 +215,12 @@ class OpenF1Provider(TimingProvider):
         except (TypeError, ValueError):
             return None
 
-    async def _get_json(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    async def _get_json(
+        self,
+        path: str,
+        params: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
         if self._client is None:
             await self.connect()
 
@@ -227,7 +237,12 @@ class OpenF1Provider(TimingProvider):
         for attempt in range(MAX_ATTEMPTS):
             await self._throttle()
             try:
-                response = await self._client.get(path + query)
+                # Endpoint `location`: son varios MB por piloto, asi que
+                # necesita un timeout mayor que el resto.
+                if timeout is None:
+                    response = await self._client.get(path + query)
+                else:
+                    response = await self._client.get(path + query, timeout=timeout)
             except httpx.HTTPError as exc:
                 self._record_error(exc)
                 raise ProviderError("Fallo de red hacia OpenF1 %s: %s" % (path, exc)) from exc
@@ -599,49 +614,179 @@ class OpenF1Provider(TimingProvider):
         """Posiciones GPS: la **ultima muestra de cada piloto**.
 
         El endpoint ``location`` devuelve una fila por piloto e instante de
-        toda la sesion (unas 80.000 filas para una hora con 22 pilotos). Para
-        dibujar el mapa de un replay alcanza con donde termino cada uno, asi
-        que se reduce a una fila por piloto: 22 puntos en lugar de 80.000,
-        sin que el snapshot guarde basura.
+        toda la sesion. Para la FP3 de Austin fueron 18.418 filas **por
+        piloto** (unos 2,3 MB), y sin filtro son ~50 MB por sesion: una
+        descarga de ese peso es lenta y fragile (el timeout normal de 30 s
+        no alcanza).
 
-        La API puede devolver valores nulos si el feed no los trae: en ese
-        caso la coordenada queda en ``None`` y el mapa no dibuja el auto, en
-        vez de dibujarlo en el origen (0,0).
+        Por eso se consulta **piloto por piloto, en paralelo**: son 2,3 MB
+        por pedido, el limitador de tasa ya espacia los inicios un segundo
+        entre si, y un piloto que falle no tira abajo a los demas.
+
+        Para dibujar el mapa alcanza con donde termino cada auto, asi que
+        de cada piloto se conserva solo la ultima muestra: 22 puntos en
+        lugar de 400.000.
         """
         key = str(session_key or self._session_key or "")
         if not key:
             return []
-        rows = await self._get_json("/location", {"session_key": key})
+
+        try:
+            conductores = await self._get_json("/drivers", {"session_key": key})
+        except ProviderError:
+            # Sin la lista de pilotos no se puede pedir uno por uno.
+            conductores = []
+
+        numeros: list[str] = []
+        for fila in conductores or []:
+            numero = str(fila.get("driver_number") or "")
+            if numero and numero not in numeros:
+                numeros.append(numero)
+
+        if not numeros:
+            # Fallback: una sola consulta de toda la sesion. Es mas pesada,
+            # pero mejor que quedarse sin posiciones.
+            filas = await self._get_json("/location", {"session_key": key}, timeout=LOCATION_TIMEOUT_SECONDS)
+            numeros = []
+        else:
+            respuestas = await asyncio.gather(
+                *(
+                    self._get_json(
+                        "/location",
+                        {"session_key": key, "driver_number": numero},
+                        timeout=LOCATION_TIMEOUT_SECONDS,
+                    )
+                    for numero in numeros
+                ),
+                return_exceptions=True,
+            )
+            filas = []
+            for numero, respuesta in zip(numeros, respuestas):
+                if isinstance(respuesta, Exception):
+                    # Un piloto que falla no debe tirar abajo a los demas.
+                    logger.warning("OpenF1: sin posiciones para el piloto %s: %s", numero, respuesta)
+                    continue
+                for fila in respuesta or []:
+                    fila = dict(fila)
+                    fila.setdefault("driver_number", numero)
+                    filas.append(fila)
 
         ultima: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            numero = str(row.get("driver_number") or "")
+        for fila in filas:
+            numero = str(fila.get("driver_number") or "")
             if not numero:
                 continue
             anterior = ultima.get(numero)
-            if anterior is None or self._row_time(row) >= self._row_time(anterior):
-                ultima[numero] = row
+            if anterior is None or self._row_time(fila) >= self._row_time(anterior):
+                ultima[numero] = fila
 
         posiciones: list[dict[str, Any]] = []
-        for numero, row in sorted(ultima.items(), key=lambda item: item[0]):
-            momento = parse_timestamp(row.get("date"))
+        for numero, fila in sorted(ultima.items(), key=lambda item: item[0]):
+            momento = parse_timestamp(fila.get("date"))
             posiciones.append(
                 {
                     "provider_id": self.provider_id,
                     "driver_number": numero,
                     "timestamp": momento.isoformat() if momento else None,
                     "source_timestamp": momento.isoformat() if momento else None,
-                    "x": to_float(row.get("x")),
-                    "y": to_float(row.get("y")),
-                    "z": to_float(row.get("z")),
-                    "lap": to_int(row.get("lap")),
-                    "number_of_laps": to_int(row.get("number_of_laps")),
+                    "x": to_float(fila.get("x")),
+                    "y": to_float(fila.get("y")),
+                    "z": to_float(fila.get("z")),
+                    "lap": to_int(fila.get("lap")),
+                    "number_of_laps": to_int(fila.get("number_of_laps")),
                     "speed": None,
                     "gear": None,
                     "status": None,
                 }
             )
         return posiciones
+
+    async def get_best_laps(self, session_key: str | int | None = None) -> list[dict[str, Any]]:
+        """Mejor vuelta de cada piloto, con los tiempos por sector.
+
+        Es lo que hace posible el **analisis por sectores**: el feed en vivo
+        solo publica los sectores de la *ultima* vuelta de cada piloto (y no
+        suman su mejor vuelta), asi que no sirven para comparar. En cambio
+        ``/laps`` trae el desglose de cada vuelta, y los sectores de la mejor
+        vuelta **suman exactamente** el tiempo de esa vuelta.
+
+        Se agrega el compuesto del stint en el que se hizo esa vuelta (de
+        ``/stints``), para poder decir con que neumatico se hizo el mejor
+        tiempo.
+        """
+        key = str(session_key or self._session_key or "")
+        if not key:
+            return []
+
+        filas = await self._get_json("/laps", {"session_key": key})
+        mejores: dict[str, dict[str, Any]] = {}
+        for fila in filas or []:
+            duracion = fila.get("lap_duration")
+            if not duracion:
+                continue
+            numero = str(fila.get("driver_number") or "")
+            if not numero:
+                continue
+            if numero not in mejores or duracion < mejores[numero]["lap_duration"]:
+                mejores[numero] = fila
+
+        if not mejores:
+            return []
+
+        # Compuesto de cada stint, para ubicar la vuelta en el stint.
+        stints: list[dict[str, Any]] = []
+        try:
+            stints = await self._get_json("/stints", {"session_key": key})
+        except ProviderError:
+            stints = []
+
+        salida: list[dict[str, Any]] = []
+        for numero, fila in mejores.items():
+            vuelta = int(fila.get("lap_number") or 0)
+            compuesto = None
+            edad = None
+            edad_inicio = None
+            inicio_stint = None
+            for stint in stints or []:
+                if str(stint.get("driver_number") or "") != numero:
+                    continue
+                inicio = int(stint.get("lap_start") or 0)
+                fin = int(stint.get("lap_end") or 0)
+                if inicio <= vuelta <= (fin or inicio):
+                    compuesto = stint.get("compound")
+                    edad_inicio = to_int(stint.get("tyre_age_at_start"))
+                    inicio_stint = inicio
+                    # La edad del neumático en ESTA vuelta: la del comienzo del
+                    # stint mas las vueltas que se le、趣味amente asi.
+                    # ``tyre_age_at_start`` es la de cuando se pondio el
+                    # neumatico: con eso sola, la mejor vuelta de la Q3
+                    # pareceria recien estrenado.
+                    edad = (
+                        (edad_inicio or 0) + max(0, vuelta - inicio)
+                        if edad_inicio is not None
+                        else None
+                    )
+                    break
+
+            salida.append(
+                {
+                    "driver_number": numero,
+                    "lap_number": vuelta,
+                    "lap_time": to_float(fila.get("lap_duration")),
+                    "sector_1": to_float(fila.get("duration_sector_1")),
+                    "sector_2": to_float(fila.get("duration_sector_2")),
+                    "sector_3": to_float(fila.get("duration_sector_3")),
+                    "compound": compuesto,
+                    "tyre_age": edad,
+                    "tyre_age_at_start": edad_inicio,
+                    "stint_lap_start": inicio_stint,
+                    "is_pit_out_lap": bool(fila.get("is_pit_out_lap")),
+                    "i1_speed": to_float(fila.get("i1_speed")),
+                    "i2_speed": to_float(fila.get("i2_speed")),
+                }
+            )
+        salida.sort(key=lambda item: (item.get("lap_time") is None, item.get("lap_time") or 0))
+        return salida
 
     @staticmethod
     def _row_time(row: dict[str, Any]) -> float:

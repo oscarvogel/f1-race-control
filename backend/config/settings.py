@@ -48,9 +48,12 @@ APP_MODE = os.environ.get("APP_MODE", "personal")
 APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/Argentina/Cordoba")
 APP_DEBUG = env_bool("APP_DEBUG", True)
 
-SECRET_KEY = os.environ.get(
-    "DJANGO_SECRET_KEY",
-    "race-center-dev-local-only-cambiar-en-produccion-personal",
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "") or (
+    # Si la variable esta definida pero vacia (linea en blanco en el .env),
+    # `os.environ.get` devuelve "" y no el valor por defecto: con la clave
+    # vacia, Django no puede firmar la cookie de sesion y revienta al
+    # firmarla, no al arrancar.
+    "race-center-dev-local-only-cambiar-en-produccion-personal"
 )
 
 INSTALLED_APPS = [
@@ -67,6 +70,8 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.gzip.GZipMiddleware",
+    # Exige sesion valida en la API (si hay credenciales configuradas).
+    "core.auth.SessionAuthMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -157,6 +162,21 @@ REST_FRAMEWORK = {
 
 ENABLE_PUBLIC_ACCESS = env_bool("ENABLE_PUBLIC_ACCESS", False)
 ENABLE_LAN_ACCESS = env_bool("ENABLE_LAN_ACCESS", False)
+
+# --------------------------------------------------------------------------- #
+# Acceso al sitio
+#
+# Si hay usuario y contrasena, la API pide sesion: el login es de la propia
+# aplicacion (pantalla propia, en espanol) y la proteccion la aplica nginx
+# con ``auth_request`` consultando a ``/api/auth/check/``.
+#
+# Sin estas variables no se pide nada: es el modo de desarrollo local.
+# --------------------------------------------------------------------------- #
+
+RACE_CENTER_USER = os.environ.get("RACE_CENTER_USER", "")
+RACE_CENTER_PASSWORD = os.environ.get("RACE_CENTER_PASSWORD", "")
+# Duracion de la sesion, en dias.
+RACE_CENTER_SESSION_SECONDS = env_int("RACE_CENTER_SESSION_DAYS", 30) * 86400
 
 BACKEND_HOST = os.environ.get("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = env_int("BACKEND_PORT", 8000)

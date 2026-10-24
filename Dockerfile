@@ -51,10 +51,10 @@ ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     NODE_VERSION=22.23.4
 
-# Node 22 (NodeSource) + nginx + supervisor + utilidades de htpasswd/envsubst.
+# Node 22 (NodeSource) + nginx + supervisor.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl gnupg nginx supervisor gettext-base apache2-utils \
+        ca-certificates curl gnupg nginx supervisor \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
         | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
@@ -76,7 +76,7 @@ COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
 COPY deploy/entrypoint.sh /app/entrypoint.sh
 COPY deploy/nginx.conf /etc/nginx/nginx.conf
-COPY deploy/nginx-site.conf.template /app/deploy/nginx-site.conf.template
+COPY deploy/nginx-site.conf /etc/nginx/conf.d/site.conf
 COPY deploy/supervisord.conf /etc/supervisor/supervisord.conf
 COPY services/live-timing/ /app/services/live-timing/
 

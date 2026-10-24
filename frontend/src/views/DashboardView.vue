@@ -10,6 +10,8 @@ import WeatherPanel from '@/components/WeatherPanel.vue'
 import BestLapsChart from '@/components/BestLapsChart.vue'
 import CircuitMap from '@/components/CircuitMap.vue'
 import DiagnosticsPanel from '@/components/DiagnosticsPanel.vue'
+import AnalysisPanel from '@/components/AnalysisPanel.vue'
+import ChampionshipPanel from '@/components/ChampionshipPanel.vue'
 import { useRaceStore } from '@/stores/race'
 import { usePolling } from '@/composables/usePolling'
 
@@ -89,6 +91,18 @@ onMounted(() => {
           <TyresPanel class="h-[420px]" />
         </div>
         <BestLapsChart />
+      </div>
+
+      <!--
+        Analisis post-sesion: comparacion por sectores de la mejor vuelta y
+        clasificacion del campeonato. Los dos leen fuentes historicas (no
+        cambian cada 2 s como el snapshot en vivo).
+      -->
+      <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div class="xl:col-span-2">
+          <AnalysisPanel class="h-[520px]" />
+        </div>
+        <ChampionshipPanel class="h-[520px]" />
       </div>
     </main>
 

@@ -300,6 +300,89 @@ class JolpicaProvider(TimingProvider):
             for entry in entries
         ]
 
+    async def get_championship(self, season: int | None = None) -> dict[str, Any]:
+        """Campeonato de pilotos y de constructores de una temporada.
+
+        La estructura de Jolpica (Ergast) es:
+
+            MRData.StandingsTable.StandingsLists[].DriverStandings[]
+            MRData.StandingsTable.StandingsLists[].ConstructorStandings[]
+
+        Ojo: la tabla no se llama ``Standings`` sino ``StandingsLists``, y
+        dentro viene un elemento por tanda (``round``). Se toma la **última**
+        tanda con datos, que es la ultima ronda ya contabilizada.
+
+        Dos detalles que_costaron_una hora de debugging, verificados contra
+        la respuesta real de la API:
+
+        1. El endpoint de pilotos **no** trae el standings de constructores:
+        hay que pedir ``/constructorstandings.json`` aparte.
+        2. En el endpoint de pilotos, el equipo de cada piloto viene en
+        ``Constructors`` (lista), no en ``Constructor``. El equipo actual es el
+        **último** de esa lista.
+
+        El endpoint tampoco trae los podios: se devuelven como ``None`` (no
+        como cero), porque un dato que no viene no se inventa.
+
+        Devuelve ``{"season", "round", "drivers": [...], "teams": [...]}``.
+        """
+        payload = await self._get_json("/%d/driverstandings.json" % season)
+        tabla = payload.get("MRData", {}).get("StandingsTable", {})
+        listas = tabla.get("StandingsLists") or []
+        tanda = listas[-1] if listas else {}
+
+        drivers = []
+        for entrada in tanda.get("DriverStandings") or []:
+            piloto = entrada.get("Driver") or {}
+            # El equipo actual es el ultimo de la lista de "Constructors".
+            constructores = entrada.get("Constructors") or []
+            if constructores:
+                constructor = constructores[-1] or {}
+            else:
+                constructor = entrada.get("Constructor") or {}
+            drivers.append(
+                {
+                    "position": int(entrada.get("position") or 0),
+                    "driver_number": str(piloto.get("permanentNumber") or ""),
+                    "code": piloto.get("code"),
+                    "full_name": "%s %s" % (piloto.get("givenName"), piloto.get("familyName")),
+                    "country_code": piloto.get("nationality"),
+                    "team": constructor.get("name"),
+                    "points": int(entrada.get("points") or 0),
+                    "wins": int(entrada.get("wins") or 0),
+                    # El endpoint no publica los podios.
+                    "podiums": None,
+                }
+            )
+
+        # El standings de constructores va en su propio endpoint.
+        teams = []
+        try:
+            payload_equipos = await self._get_json("/%d/constructorstandings.json" % season)
+        except ProviderError:
+            payload_equipos = {}
+        tabla_equipos = payload_equipos.get("MRData", {}).get("StandingsTable", {})
+        listas_equipos = tabla_equipos.get("StandingsLists") or []
+        tanda_equipos = listas_equipos[-1] if listas_equipos else {}
+        for entrada in tanda_equipos.get("ConstructorStandings") or []:
+            constructor = entrada.get("Constructor") or {}
+            teams.append(
+                {
+                    "position": int(entrada.get("position") or 0),
+                    "team": constructor.get("name"),
+                    "country_code": constructor.get("nationality"),
+                    "points": int(entrada.get("points") or 0),
+                    "wins": int(entrada.get("wins") or 0),
+                }
+            )
+
+        return {
+            "season": int(tabla.get("season") or season or 0),
+            "round": int(tanda.get("round") or 0),
+            "drivers": drivers,
+            "teams": teams,
+        }
+
     # -- capacidades no soportadas ---------------------------------------- #
 
     async def get_timing(self) -> list:

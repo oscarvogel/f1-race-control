@@ -9,6 +9,9 @@ venv/
 htmlcov/
 backend/db.sqlite3
 backend/db.sqlite3-journal
+# SQLite en modo WAL: el archivo -wal y el -shm tambien son de la base.
+backend/db.sqlite3-wal
+backend/db.sqlite3-shm
 backend/media/
 
 # Node
