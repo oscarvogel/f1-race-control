@@ -63,6 +63,9 @@ interface Dot {
 const dots = computed<Dot[]>(() =>
   positions.value
     .map((position) => {
+      // Una posicion sin coordenadas no se dibuja: si se dibujara en (0,0)
+      // el auto apareceria en una esquina del mapa, que es un dato falso.
+      if (position.x == null || position.y == null) return null
       const point = project(position.x, position.y)
       if (!point) return null
       const entry = store.timing.find((item) => item.driver_number === position.driver_number)
@@ -145,6 +148,38 @@ const viewBox = computed(() => {
   const y = Math.min(Math.max(dot.py, base.y + half), base.y + base.height - half)
   return `${x - half} ${y - half} ${size} ${size}`
 })
+
+/**
+ * Por que no hay autos dibujados.
+ *
+ * El feed de F1 publica las coordenadas (canales `CarData` y `Positions`)
+ * durante la carrera, no durante la clasificacion: alla la suscripcion es
+ * valida pero no llega ningun mensaje de esos canales. Verificado contra el
+ * snapshot del feed durante la quali de Austin 2026.
+ *
+ * Se dice explicitamente en vez de dejar el panel vacio y que el usuario
+ * piense que el mapa esta roto.
+ */
+const emptyReason = computed(() => {
+  if (store.viewMode === 'historical') {
+    return 'OpenF1 no tiene posiciones GPS para esta sesion.'
+  }
+  const enClasificacion = store.isQualifying
+  if (store.sessionIsActive) {
+    return 'El feed no publica coordenadas en esta sesion: los canales CarData y Positions no envian mensajes durante la clasificacion. En la carrera si llegan.'
+  }
+  if (enClasificacion) {
+    return 'El feed no publico coordenadas durante esta clasificacion: los canales CarData y Positions no envian mensajes en ese tipo de sesion.'
+  }
+  return 'El proveedor no entrego coordenadas para esta sesion.'
+})
+
+/** Leyenda: en el replay los autos estan en su ultima posicion conocida. */
+const legendTitle = computed(() =>
+  store.viewMode === 'historical'
+    ? `${dots.value.length} autos (ultima posicion)`
+    : `${dots.value.length} autos en pista`,
+)
 
 watch(
   () => store.selectedDriver,
@@ -251,7 +286,7 @@ watch(
         class="absolute bottom-2 left-3 rounded-md border border-race-750/70 bg-race-900/85 px-2.5 py-1.5 backdrop-blur"
       >
         <p class="text-[10px] uppercase tracking-[0.12em] text-slate-500">
-          {{ dots.length }} autos en pista
+          {{ legendTitle }}
         </p>
         <p class="text-[10px] text-slate-600">
           Trazado derivado de posiciones GPS reales
@@ -271,8 +306,7 @@ watch(
       v-if="!dots.length && outline"
       class="px-4 py-3 text-center text-[11px] text-slate-500"
     >
-      Sin posiciones en vivo. El proveedor no entrega coordenadas mientras la
-      sesion no esta activa.
+      {{ emptyReason }}
     </p>
   </section>
 </template>

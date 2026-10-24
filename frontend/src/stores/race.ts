@@ -174,6 +174,33 @@ export const useRaceStore = defineStore('race', () => {
     return type
   })
 
+  /**
+   * Fin de la sesion en curso, en epoch ms.
+   *
+   * Dato real del feed: `SessionInfo.EndDate` en hora local del circuito,
+   * convertido a UTC con el `GmtOffset` que publica la propia F1. En
+   * clasificacion es el final del bloque Q1/Q2/Q3 completo, no el del
+   * segmento actual.
+   */
+  const sessionEndAt = computed<number | null>(() => {
+    const raw = session.value?.end_time_utc
+    if (!raw) return null
+    const value = new Date(raw).getTime()
+    return Number.isNaN(value) ? null : value
+  })
+
+  /**
+   * Cuanto falta para que termine la sesion en curso.
+   *
+   * Devuelve milisegundos (puede ser negativo si la sesion ya termino) o
+   * `null` cuando el proveedor no publica hora de fin.
+   */
+  function sessionEndsInMs(nowMs: number): number | null {
+    const end = sessionEndAt.value
+    if (end === null) return null
+    return end - nowMs
+  }
+
   const isQualifying = computed(() => {
     const type = session.value?.session_type?.toLowerCase() ?? ''
     return type.includes('qualifying') || type.includes('shootout')
@@ -449,6 +476,8 @@ export const useRaceStore = defineStore('race', () => {
     compoundByDriver,
     gmtOffset,
     nextSessionAt,
+    sessionEndAt,
+    sessionEndsInMs,
     forecast,
     forecastWindow,
     forecastError,

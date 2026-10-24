@@ -135,6 +135,52 @@ datos mal interpretados:
   estado). Se conserva crudo en el backend, pero la UI solo muestra
   indicadores transitorios cuando `sessionIsActive`.
 
+### 4.5 Qué canales publica el feed (y por qué el mapa no tiene autos)
+
+Para responder "dónde está cada piloto" hubo que **sondar el feed** en vez de
+suponerlo. La sonda (`.run/probe_feed.js`) replica el handshake del cliente
+real: pre-negociación `OPTIONS`, cookie `AWSALBCORS`, `POST /negotiate`,
+WebSocket con `id=<connectionToken>`, handshake `{"protocol":"json","version":1}`
+y `Subscribe` con la lista de canales.
+
+**La primera versión de la sonda estaba rota** y dio una conclusión falsa:tomaba
+`frame.target` como nombre del canal, pero en SignalR Core el `target` siempre
+es `"feed"`; el canal va en `frame.arguments[0]` y el payload en
+`frame.arguments[1]`. Con ese error, hasta el grupo de control (`TimingData`,
+`SessionInfo`, …) parecía "sin mensajes", y la conclusión "el canal `Positions`
+no existe" era falsa. Corregida, la sonda sí suscribe y recibe.
+
+Resultado, con la sesión de clasificación de Austin 2026 en curso:
+
+| Canal | ¿Llega? | Nota |
+|---|---|---|
+| `TimingData`, `TimingDataF1`, `TimingAppData` | sí | 73 y 8 mensajes en 40 s |
+| `WeatherData`, `TimingStats` | sí | |
+| `DriverList`, `SessionInfo`, `RaceControlMessages`, `TeamRadio` | en el snapshot inicial | |
+| `TrackStatus` | **sí** | `{"Status":"1","Message":"AllClear"}` |
+| `ExtrapolatedClock`, `AudioStreams` | en el snapshot inicial | |
+| `CarData`, `Positions`, `Position`, `CarStatus`, `Clock`, `LapCount` | **no** | suscripción válida, el feed no publica nada |
+
+La conclusión importante: **la suscripción a `CarData` y `Positions` es
+correcta** (el propio `TrackStatus`, añadido por el mismo parche, sí llega), pero
+**durante la clasificación el feed no publica coordenadas**. No es un bug del
+código: es lo que hace la fuente. Por eso el mapa en vivo no puede mostrar los
+autos durante la quali, y la interfaz lo dice explícitamente en lugar de
+dejar el panel vacío.
+
+También quedó documentado el formato de `Stats`, que es lo que hace funcionar
+la columna de gap:
+
+- `Stats` llega como **dict** `{"0": {...}, "1": {...}}` o como **lista** de 3.
+- El valor útil **no siempre está en el índice 0**: un piloto que hizo su
+  tiempo en Q2 lo tiene en el índice 1.
+- En el knockout (Q3) el feed **vacía** `BestLapTime` (`{"Value": "", "Lap": N,
+  "_deleted": ["Lap"]}`): ese campo sigue el segmento en curso, no la sesión.
+- Para un piloto **en pista**, el feed escribe el delta en vivo en el primer
+  slot aunque su segmento actual sea el segundo: por eso la etiqueta de
+  segmento (Q1/Q2/Q3) solo se muestra si el piloto tiene una vuelta completada
+  en ese segmento.
+
 ---
 
 ## 5. Proveedores implementados
@@ -253,6 +299,41 @@ Causas, en dos niveles:
 Con un intervalo de 1 s y un cooldown respetuoso, la cuota deja de ser el
 factor limitante.
 
+### 7.5 OpenF1 bloquea todo durante una sesión en vivo
+
+Descubierto el 24/10/2026, justo antes de la clasificación. OpenF1 cambio su
+politica de acceso a las 20:44 UTC y paso a responder **401** a *todo*,
+incluidas las sesiones ya terminadas:
+
+```
+{"detail": "Live F1 session in progress. Global API access (including past
+sessions) is restricted to authenticated users until the session ends.
+Get an API key here: https://buy.stripe.com/..."}
+```
+
+El efecto practico: en plena sesion, el catalogo de sesiones se quedaba
+vacio y con el disappearia la cuenta regresiva a la proxima sesion, justo
+cuando mas hace falta.
+
+**Como se resolvió, sin perder funcionalidad:**
+
+1. **El catalogo se guarda en la base** (`scope = "catalog"`). Si OpenF1 no
+   responde, se usa la copia guardada, marcada como `stale`.
+2. **Jolpica pasa a ser la segunda fuente del calendario.** No se bloquea, y
+   publica la hora de inicio de cada sesion del fin de semana (FP1, FP2,
+   FP3, Sprint, Clasificacion y Carrera). El catalogo se construye desde ahi
+   cuando OpenF1 no responde.
+3. **Las claves de sesion se recuperan de la base** (`Session`), o sea de las
+   que ya se habian descargado antes. Asi el selector sigue ofreciendo los
+   FP y la carrera.
+4. Los **snapshots historicos ya descargados** se sirven desde la base sin
+   volver a preguntar a OpenF1: el replay de los FP sigue funcionando
+   durante la carrera.
+
+La limitacion que queda: una sesion historica **que nunca se haya descargado**
+no se puede consultar durante una sesion en vivo sin clave de OpenF1. Se
+documenta en `docs/providers.md`.
+
 ---
 
 ## 8. Relojes del circuito y prevision meteorologica
@@ -330,6 +411,10 @@ sistema, no por lectura de código.
 | 8 | Un 429 dejaba a OpenF1 en `ERROR` | Se usaba `ProviderError` para todo | `ProviderRateLimited` y estado conservado |
 | 19 | **Un histórico tomaba el lugar del snapshot en vivo** | `latest_snapshot()` tomaba la fila más reciente de la tabla, sin distinguir ámbito: al cargar un FP1, el dashboard en vivo pasaba a servir datos históricos | Campo `scope` en `SessionSnapshot` (+ migración con corrección de datos) y filtro por `scope="live"` en `latest_snapshot()` |
 | 20 | `IntegrityError: NOT NULL constraint failed: core_sessionsnapshot.scope` | Se aplicó la migración con el stack corriendo: el proceso viejo no conocía la columna nueva | `start-dev.sh` aplica las migraciones **antes** de arrancar los servicios, y con el stack detenido |
+| 25 | **La columna de GAP salía vacía en clasificación** | El normalizador solo miraba `Stats[0]` y solo si `Stats` era **lista**. El feed entrega `Stats` como **dict** `{"0": {...}}` o como lista de 3, y el valor útil no siempre está en el índice 0 (el que hizo su tiempo en Q2 lo tiene en el 1) | Se normaliza `Stats` a una lista `(índice, datos)` y se recorren todos los segmentos; se queda el último con dato, que es el gap más reciente que publicó F1 para ese piloto |
+| 26 | **La columna MEJOR VUELTA quedaba en "—" durante el knockout** | En Q3 el feed vacía `BestLapTime` (`{"Value": "", "_deleted": ["Lap"]}`): ese campo sigue el segmento en curso, no la sesión | La mejor vuelta se calcula como el mejor tiempo entre el valor de nivel superior y los mejores por segmento (`BestLapTimes`), con su número de vuelta |
+| 27 | El mapa del circuito nunca mostraba autos en el replay | El snapshot histórico traía `"positions": []` hardcodeado, aunque el proveedor ya tenía `get_positions()` | `build_historical_snapshot()` pide las posiciones a OpenF1 (`/location`) y las guarda en el snapshot |
+| 28 | La sonda de canales daba una conclusión falsa | Tomaba `frame.target` como nombre de canal; en SignalR Core el `target` siempre es `"feed"` y el canal va en `frame.arguments[0]` | Sonda corregida (§4.5) y suscripción enviada tras el handshake, como hace el proveedor |
 
 ### Proveedor Node (upstream)
 
@@ -352,6 +437,8 @@ sistema, no por lectura de código.
 | 22 | "Último dato: sin dato" en modo histórico | La edad del proveedor en vivo no corresponde a la sesión que se mira: en histórico se muestra la edad del snapshot |
 | 23 | El dashboard no se veia desde Windows | En esta maquina el 5173 ya lo ocupa otro proyecto (`0.0.0.0:5173` en Windows); el navegador caia ahi y no a Race Center | Race Center paso a **5174** (`FRONTEND_PORT` en `.env`). La API (8000) y el proveedor live (3000) no tienen conflicto |
 | 24 | La base crecia sin limite | Cada snapshot en vivo pesa ~90 KB y se escribia uno nuevo cada vez que cambiaba el dato; `SessionSnapshot` no se recortaba nunca (181 filas y 19 MB en una tarde) | `trim_history()` recorta los snapshots **en vivo** a los ultimos 200. Los historicos no se tocan: hay uno por sesion |
+| 29 | En la clasificación no se veía cuánto faltaba para que terminara | El feed publica `SessionInfo.EndDate` (hora local del circuito) y `GmtOffset`, pero el backend no lo exponía como "fin de sesión" y la interfaz no lo mostraba | `SessionInfo.end_time_utc` ya se calculaba; se expone en el store (`sessionEndAt` / `sessionEndsInMs`) y se muestra un contador **FINALIZA EN hh:mm:ss** en la cabecera de la clasificación, en rojo cuando faltan menos de 5 minutos |
+| 30 | Los dos relojes de la interfaz podían desfasarse | La cabecera y la clasificación llevaban cada una su propio `setInterval` | Se extrajo un reloj compartido (`composables/useClock.ts`) con un único intervalo para toda la app |
 
 ### Entorno
 
@@ -386,11 +473,11 @@ Chrome DevTools MCP, sobre el dashboard real con datos de Austin 2026, en
 cd backend && ./.venv/bin/python -m pytest
 ```
 
-**77 pruebas en verde.** Reparto:
+**89 pruebas en verde.** Reparto:
 
 | Archivo | Qué cubre |
 |---|---|
-| `test_normalization.py` | Formato real del feed: sectores, gaps,ploreads, `None` vs `0` |
+| `test_normalization.py` | Formato real del feed: sectores, gaps, `Stats` (dict y lista), mejor vuelta por segmento, posiciones GPS, `None` vs `0` |
 | `test_manager.py` | Selección por semántica, prioridad, fallback |
 | `test_api.py` | Endpoints de la API interna |
 | `test_persistence.py` | Modelos, deduplicación, fingerprint, ámbito del snapshot |
@@ -407,15 +494,16 @@ no es un fallo**.
 
 ### Prioridad alta
 
-1. **Verificar el LIVE de la clasificación** (GP US 2026, `session_key 11392`).
-   La clasificación arranca **21:00 UTC = 18:00 Argentina**. Hasta entonces
-   el veredicto honesto es: feed conectado, datos reales confirmados de
-   sesión finalizada, `LIVE` **no verificado**. Grabador de evidencia en
-   `.run/logs/live-evidence.log`.
-2. **Confirmar que `CarData` entrega posiciones** durante una sesión activa.
-   El canal está suscrito y el feed lo acepta, pero `positions` llega vacío
-   porque solo fluye con sesión en curso. De esto depende que el mapa del
-   circuito muestre los autos en movimiento.
+1. **Verificar que las coordenadas en vivo llegan en la carrera.**
+   La clasificación ya está **verificada en vivo** (§10), pero el mapa sigue
+   sin autos: el feed **no publica** coordenadas durante la clasificación
+   (§4.5), no es un fallo del código. La carrera es el 25/10 a las 20:00 UTC:
+   ahí hay que comprobar si `CarData`/`Positions` publican `X/Y/Z` y, si lo
+   hacen, los autos aparecen solos en el mapa (la ruta de código ya está
+   escrita y probada).
+2. **Elección del replay**: con las posiciones por piloto ya guardadas, la
+   sesión de clasificación se puede ver "en crudo" (dónde terminó cada uno)
+   o con una línea de tiempo que mueva los autos. Hoy es la primera.
 
 ### Prioridad media
 
@@ -423,8 +511,8 @@ no es un fallo**.
    circuitos de la temporada. Hoy solo esta Austin (circuit_key 9); para
    cualquier otro trazado **no hay prevision**, a proposito.
 4. Medir el tamaño del snapshot histórico completo: `location` son 403.062
-   muestras GPS; decidir si el replay necesita posiciones o si conviene
-   quedarse con un subconjunto.
+   muestras GPS. Se resolvió guardando **una fila por piloto** (la última),
+   pero queda medir el tiempo de descarga del endpoint completo.
 5. Documentar en `docs/providers.md` la Incorporación de una API nueva como
    guía práctica (ya está el esqueleto del adaptador).
 
@@ -436,6 +524,18 @@ no es un fallo**.
 - La columna de neumático del historico muestra el compuesto real.
 - "Ultimo dato" en modo historico muestra la edad del snapshot, no la del
   proveedor en vivo.
+- **LIVE verificado**: la clasificación de la quali de Austin 2026 se movió de
+  verdad durante la sesión (22 entradas, mejores vueltas reales, Q1/Q2/Q3
+  completándose, vueltas contadas).
+- **Contador de fin de sesión** en la clasificación ("FINALIZA EN hh:mm:ss").
+- **Columna de GAP** con los valores reales que publica la F1, con la etiqueta
+  del segmento (Q1/Q2/Q3) del que salen.
+- **Columna MEJOR VUELTA** con el mejor tiempo real de cada piloto (incluido
+  el knockout de Q3, donde el feed vacía el valor global).
+- **Neumáticos**: los 22 pilotos con compuesto y edad de stint.
+- **Mapa del circuito** con la posición real de cada piloto en el replay
+  histórico (última posición conocida de cada uno).
+- **Mensaje honesto** en el mapa cuando la fuente no entrega coordenadas.
 
 ### Fuera de alcance (decidido)
 
@@ -446,7 +546,89 @@ no es un fallo**.
 
 ---
 
-## 13. Cómo seguir
+## 13. Despliegue en contenedor (Coolify)
+
+### Un solo contenedor, cuatro procesos
+
+La app son cuatro cosas que tienen que vivir juntas: el SPA, la API, el
+proceso de ingesta y el proveedor de cronometraje. En Coolify lo más simple
+es **una sola aplicación** (build pack `Dockerfile`) con un supervisor adentro:
+
+| Proceso | Qué hace | Escucha en |
+|---|---|---|
+| `nginx` | sirve el SPA y hace proxy de `/api` | `0.0.0.0:80` (el único puerto) |
+| `backend` | Django con gunicorn | `127.0.0.1:8000` |
+| `ingest` | `manage.py ingest_live --interval 3` | — |
+| `live` | proveedor Node de cronometraje | `127.0.0.1:3000` |
+
+Lo único que sale a la red es el puerto 80 de nginx: el proveedor del feed de
+la F1 y la API siguen en loopback, igual que en la instalación local. El SPA
+y la API comparten origen, así que el navegador **no** necesita CORS ni
+credenciales de terceros.
+
+### OJO: el build pack tiene que ser `Dockerfile`
+
+Con **Nixpacks**, Coolify genera su propio Dockerfile e ignora el del
+repositorio: el contenedor levantaría sin el proveedor de cronometraje. En
+esta instancia hay una app (`vogel-gestion-servicios-production-backend`) con
+nixpacks, así que el aviso no es teórico.
+
+### Archivos
+
+| Archivo | Qué hace |
+|---|---|
+| `Dockerfile` | Build multi-etapa: frontend (node) + dependencias del proveedor (node) + runtime (Python 3.12 + Node 22 + nginx + supervisor) |
+| `deploy/nginx.conf` | Configuración principal de nginx |
+| `deploy/nginx-site.conf.template` | El vhost: SPA + proxy de `/api` + protección opcional con usuario |
+| `deploy/supervisord.conf` | Los cuatro procesos |
+| `deploy/entrypoint.sh` | htpasswd, migraciones y arranque |
+| `.dockerignore` | Excluye `.run/` (donde vive el token de Coolify), `.env`, `node_modules` y la base local |
+
+### Variables de entorno en Coolify
+
+| Variable | Valor | Por qué |
+|---|---|---|
+| `DJANGO_SECRET_KEY` | (generado) | Django lo exige fuera de desarrollo |
+| `DJANGO_DB_PATH` | `/data/db.sqlite3` | La base vive en el volumen persistente, no en el código |
+| `APP_DEBUG` | `false` | |
+| `ENABLE_LAN_ACCESS` | `true` | Suma el dominio a los hosts permitidos |
+| `LAN_ALLOWED_HOSTS` | `<dominio>` | `ALLOWED_HOSTS` quedan acotados al dominio |
+| `LAN_ALLOWED_ORIGINS` | `https://<dominio>` | Orígenes CORS |
+| `TRUST_PROXY_SSL` | `true` | Detrás del proxy que termina TLS |
+| `F1_LIVETIMING_URL` | `http://127.0.0.1:3000` | El proveedor, dentro del contenedor |
+| `RACE_CENTER_USER` / `RACE_CENTER_PASSWORD` | (a definir) | Si están vacíos, el sitio se sirve **sin** protección |
+| `OPENF1_API_KEY` | (vacío) | El live de OpenF1 es de pago |
+
+El dominio: `https://race-center.186-5-245-12.sslip.io`. Comprobado que
+**no hay wildcard DNS** para `vogelconsultoria.com.ar` (cada subdominio tiene
+su registro A), pero `sslip.io` sí resuelve nombres con el IP embebido, y
+esta instancia de Coolify **ya emite certificados Let's Encrypt** para
+dominios `sslip.io` (probado en `freellmapi`).
+
+### Verificación local del contenedor (antes de subir nada)
+
+```
+docker build -t race-center:local .
+docker run -d --name race-center-test -p 8080:80 -v race-center-data:/data \
+  -e DJANGO_SECRET_KEY=... -e RACE_CENTER_USER=piloto -e RACE_CENTER_PASSWORD=... \
+  race-center:local
+```
+
+Resultado: los cuatro procesos `RUNNING`, `GET /` → **401** sin credenciales y
+**200** con ellas (SPA y assets), `/api/health/` con datos reales detrás del
+proxy de nginx, y la base en `/data` (con sus archivos WAL).
+
+### Bugs del contenedor (encontrados probando, no leyendo)
+
+| # | Bug | Causa | Cómo se resolvió |
+|---|---|---|---|
+| 31 | El contenedor no arrancaba (exit 2) | `htpasswd -q` no existe en Debian (solo tiene `-c`, `-b`, `-i`...) | La contraseña va por stdin: `printf ... \| htpasswd -B -c -i` (así tampoco queda en la lista de procesos) |
+| 32 | nginx no arrancaba: `"types" directive is not allowed here in /etc/nginx/mime.types` | El `include mime.types` estaba en el nivel principal de nginx | Se movió dentro del bloque `http {}` |
+| 33 | 40 s perdidos en cada arranque | El entrypoint esperaba a que el proveedor respondiera en el puerto 3000, pero **ese proceso lo arranca supervisor, después** | El entrypoint no espera: la ingesta ya sabe esperar (estado `WAITING` hasta que el proveedor conecta) |
+
+---
+
+## 14. Cómo seguir
 
 ```bash
 cd /mnt/c/Programacion/proyectos/actives/f1-race-center

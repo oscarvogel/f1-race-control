@@ -314,6 +314,23 @@ class FreeLiveTimingProvider(TimingProvider):
         best_lap_lap = to_int(best_lap_raw.get("Lap")) if isinstance(best_lap_raw, dict) else None
         overall_fastest = bool(best_lap_raw.get("OverallFastest")) if isinstance(best_lap_raw, dict) else False
 
+        best_lap_times = self._normalise_best_lap_times(line.get("BestLapTimes"))
+
+        # La "mejor vuelta" del piloto es su mejor tiempo de la sesion.
+        #
+        # Durante el knockout (Q3) el feed vacia el `BestLapTime` de nivel
+        # superior: pasa a `{"Value": "", "Lap": N, "_deleted": ["Lap"]}`
+        # porque lo que cuenta ahi es la vuelta de Q3. Si solo se mirara ese
+        # campo, los pilotos que aun no hicieron su vuelta de Q3 aparecian
+        # sin mejor vuelta, aunque tuvieran un Q1 o un Q2. Por eso se compara
+        # con los mejores por segmento y se queda el mas rapido de todos.
+        for segmento, tiempo in best_lap_times.items():
+            if tiempo is None:
+                continue
+            if best_lap is None or tiempo < best_lap:
+                best_lap = tiempo
+                best_lap_lap = self._best_lap_number(line.get("BestLapTimes"), segmento)
+
         last_lap_raw = line.get("LastLapTime") or {}
         last_lap = parse_lap_time(last_lap_raw.get("Value") if isinstance(last_lap_raw, dict) else last_lap_raw)
 
@@ -322,6 +339,34 @@ class FreeLiveTimingProvider(TimingProvider):
 
         time_diff_fastest = self._clean_gap(line.get("TimeDiffToFastest"))
         time_diff_ahead = self._clean_gap(line.get("TimeDiffToPositionAhead"))
+        fastest_segment: str | None = None
+        ahead_segment: str | None = None
+
+        # En clasificacion los gaps NO vienen en el nivel superior: vienen
+        # dentro de `Stats`, y la clave del intervalo esta escrita con otra
+        # grafia ("TimeDifftoPositionAhead", con la "to" en minuscula).
+        #
+        # El feed entrega `Stats` de dos formas y hay que soportar ambas:
+        #   * dict  {"0": {...}}        -> una entrada por segmento ya corrido
+        #   * lista [Q1, Q2, Q3]       -> una entrada por segmento de la quali
+        # Ademas el valor util NO siempre esta en el indice 0: un piloto que
+        # hizo su mejor tiempo en Q2 lo tiene en el indice 1. Por eso se
+        # recorren todos los segmentos y se queda el ultimo con dato, que es
+        # el gap mas reciente que publico F1 para ese piloto. El indice del
+        # segmento del que viene el gap se expone aparte para poder etiquetar
+        # la columna (Q1/Q2/Q3) y no mezclar gaps de segmentos distintos.
+        for segment, stats_entry in self._stats_entries(line.get("Stats")):
+            fastest = self._clean_gap(stats_entry.get("TimeDiffToFastest"))
+            ahead = self._clean_gap(
+                stats_entry.get("TimeDifftoPositionAhead")
+                or stats_entry.get("TimeDiffToPositionAhead")
+            )
+            if fastest:
+                time_diff_fastest = fastest
+                fastest_segment = segment
+            if ahead:
+                time_diff_ahead = ahead
+                ahead_segment = segment
 
         compound, tyre_age, tyre_new, grid_pos = self._tyre_from_app(app_line, line)
 
@@ -347,6 +392,8 @@ class FreeLiveTimingProvider(TimingProvider):
             interval_to_ahead=interval,
             time_diff_to_fastest=time_diff_fastest,
             time_diff_to_position_ahead=time_diff_ahead,
+            time_diff_to_fastest_segment=fastest_segment,
+            time_diff_to_position_ahead_segment=ahead_segment,
             number_of_laps=to_int(line.get("NumberOfLaps")),
             number_of_pit_stops=to_int(line.get("NumberOfPitStops")),
             in_pit=bool(line.get("InPit")),
@@ -358,10 +405,38 @@ class FreeLiveTimingProvider(TimingProvider):
             tyre_age=tyre_age,
             tyre_new=tyre_new,
             grid_position=grid_pos,
-            best_lap_times=self._normalise_best_lap_times(line.get("BestLapTimes")),
+            best_lap_times=best_lap_times,
             speeds=speeds,
             source_timestamp=self._last_message_at,
         )
+
+    @staticmethod
+    def _stats_entries(raw: Any) -> list[tuple[str, dict[str, Any]]]:
+        """Normaliza ``Stats`` a una lista de ``(indice, datos)``.
+
+        El feed de cronometraje entrega ``Stats`` de dos formas indistintas:
+
+        * como mapa indexado por segmento: ``{"0": {...}, "1": {...}}``
+        * como lista de tres elementos: ``[Q1, Q2, Q3]``
+
+        Las dos se normalizan aqui a la misma estructura ``(indice, datos)``,
+        ordenada de menor a mayor, con el indice **crudo** del feed ("0", "1",
+        "2"). El indice no se traduce a "Q1"/"Q2"/"Q3" en el backend a
+        proposito: en carrera el indice "0" es la vuelta actual, no el
+        segmento Q1, y etiquetarlo seria inventar. Quien sabe si la sesion es
+        una clasificacion es el frontend, que ya distingue ambos casos.
+        """
+        entries: list[tuple[str, dict[str, Any]]] = []
+        if isinstance(raw, dict):
+            items = sorted(raw.items(), key=lambda kv: _sort_key(kv[0]))
+            for key, value in items:
+                if isinstance(value, dict):
+                    entries.append((str(key), value))
+        elif isinstance(raw, list):
+            for index, value in enumerate(raw):
+                if isinstance(value, dict):
+                    entries.append((str(index), value))
+        return entries
 
     @staticmethod
     def _value_of(raw: Any) -> str | None:
@@ -433,6 +508,45 @@ class FreeLiveTimingProvider(TimingProvider):
         return result
 
     @staticmethod
+    def _best_lap_number(raw: Any, segment: str) -> int | None:
+        """Numero de vuelta del mejor tiempo de un segmento."""
+        if not isinstance(raw, dict):
+            return None
+        indice = next((k for k, v in _SEGMENT_BY_KEY.items() if v == segment), None)
+        if indice is None:
+            return None
+        value = raw.get(indice)
+        if not isinstance(value, dict):
+            return None
+        return to_int(value.get("Lap"))
+
+    @staticmethod
+    def _stint_list(stints: Any) -> list[dict[str, Any]]:
+        """Normaliza los stints del feed a una lista ordenada.
+
+        En el feed en vivo ``Stints`` es un **diccionario** con clave por
+        stint (``{"0": {...}, "1": {...}}``), no una lista. Tratarlo como
+        lista hacia que el recorrido por sus claves descartara todos los
+        stints: por eso la columna de neumático salia vacia en vivo.
+        """
+        if isinstance(stints, dict):
+            claves: list[tuple[int, Any]] = []
+            for clave in stints.keys():
+                try:
+                    claves.append((int(clave), clave))
+                except (TypeError, ValueError):
+                    claves.append((0, clave))
+            claves.sort(key=lambda item: item[0])
+            return [
+                stints[clave]
+                for _, clave in claves
+                if isinstance(stints[clave], dict)
+            ]
+        if isinstance(stints, list):
+            return [stint for stint in stints if isinstance(stint, dict)]
+        return []
+
+    @staticmethod
     def _tyre_from_app(
         app_line: dict[str, Any],
         timing_line: dict[str, Any],
@@ -442,14 +556,15 @@ class FreeLiveTimingProvider(TimingProvider):
         tyre_age: int | None = None
         tyre_new: bool | None = None
 
-        stints = app_line.get("Stints") or timing_line.get("Stints") or []
-        if isinstance(stints, list) and stints:
+        stints = FreeLiveTimingProvider._stint_list(
+            app_line.get("Stints") or timing_line.get("Stints")
+        )
+        if stints:
             current = stints[-1]
-            if isinstance(current, dict):
-                compound = current.get("Compound")
-                tyre_age = to_int(current.get("TotalLaps"))
-                new_raw = current.get("New")
-                tyre_new = _to_bool(new_raw)
+            compound = current.get("Compound")
+            tyre_age = to_int(current.get("TotalLaps"))
+            new_raw = current.get("New")
+            tyre_new = _to_bool(new_raw)
 
         grid_pos = to_int(app_line.get("GridPos"))
         return compound, tyre_age, tyre_new, grid_pos
@@ -461,14 +576,12 @@ class FreeLiveTimingProvider(TimingProvider):
         for number, line in lines.items():
             if number in _PLACEHOLDER_KEYS or not isinstance(line, dict):
                 continue
-            for stint in line.get("Stints") or []:
-                if not isinstance(stint, dict):
-                    continue
+            for indice, stint in enumerate(self._stint_list(line.get("Stints"))):
                 stints.append(
                     Stint(
                         provider_id=self.provider_id,
                         driver_number=str(number),
-                        stint_number=len(stints) and None,
+                        stint_number=indice,
                         compound=stint.get("Compound"),
                         lap_start=to_int(stint.get("StartLaps")),
                         lap_end=None,
@@ -562,10 +675,47 @@ class FreeLiveTimingProvider(TimingProvider):
         return samples
 
     async def _cars(self) -> list[dict[str, Any]]:
-        """Estado mas reciente de cada auto (posicion + telemetria)."""
-        payload = await self._get_json("/api/car-data")
-        cars = payload.get("Cars") or []
-        return [car for car in cars if isinstance(car, dict)]
+        """Estado mas reciente de cada auto (posicion + telemetria).
+
+        Son **dos canales distintos** del feed: las coordenadas X/Y/Z llegan
+        por `Positions` y la telemetria (velocidad, rpm, marcha) por
+        `CarData`. Se unen por numero de auto para poder dibujar el mapa y
+        mostrar la telemetria a la vez.
+        """
+        telemetry: dict[str, dict[str, Any]] = {}
+        try:
+            payload = await self._get_json("/api/car-data")
+            for car in payload.get("Cars") or []:
+                if not isinstance(car, dict):
+                    continue
+                numero = str(car.get("RacingNumber") or "")
+                if numero:
+                    telemetry[numero] = car
+        except Exception:
+            pass
+
+        cars: list[dict[str, Any]] = []
+        try:
+            payload = await self._get_json("/api/positions")
+        except Exception:
+            payload = {}
+
+        for car in payload.get("Cars") or []:
+            if not isinstance(car, dict):
+                continue
+            numero = str(car.get("RacingNumber") or "")
+            if not numero:
+                continue
+            unido = dict(telemetry.get(numero) or {})
+            unido.update(car)
+            cars.append(unido)
+
+        # Si las coordenadas no llegaron pero si la telemetria, al menos esa.
+        for numero, car in telemetry.items():
+            if not any(str(otro.get("RacingNumber")) == numero for otro in cars):
+                cars.append(car)
+
+        return cars
 
     async def get_positions(self) -> list[dict[str, Any]]:
         """Posicion de cada auto sobre el circuito, en vivo."""

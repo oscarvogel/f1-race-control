@@ -6,6 +6,7 @@ from . import views
 
 urlpatterns = [
     path("health/", views.health, name="health"),
+    path("ping/", views.ping, name="ping"),
     path("providers/", views.providers, name="providers"),
     path("providers/status/", views.providers_status, name="providers-status"),
     path("meetings/", views.meetings, name="meetings"),

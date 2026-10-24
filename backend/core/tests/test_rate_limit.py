@@ -301,6 +301,9 @@ class FakeHistoricalProvider:
     async def get_race_control(self, session_key=None):
         return []
 
+    async def get_positions(self, session_key=None):
+        return []
+
 
 def test_un_snapshot_incompleto_no_es_un_fallo(monkeypatch):
     monkeypatch.setattr(history, "_openf1_provider", lambda: FakeHistoricalProvider())
@@ -323,8 +326,24 @@ def test_sin_fallos_no_hay_avisos(monkeypatch):
         async def get_stints(self, session_key=None):
             return []
 
+        async def get_positions(self, session_key=None):
+            return [
+                {
+                    "provider_id": "openf1",
+                    "driver_number": "44",
+                    "x": 1000.0,
+                    "y": 2000.0,
+                    "z": 1.0,
+                    "timestamp": "2026-10-23T17:32:00+00:00",
+                }
+            ]
+
     monkeypatch.setattr(history, "_openf1_provider", lambda: Completo())
 
     payload = asyncio.run(build_historical_snapshot("11389"))
 
     assert payload["warnings"] == []
+    # Las posiciones van al snapshot historico: son las que dibujan el mapa.
+    assert len(payload["positions"]) == 1
+    assert payload["positions"][0]["driver_number"] == "44"
+    assert payload["sources"]["positions"] == "openf1"

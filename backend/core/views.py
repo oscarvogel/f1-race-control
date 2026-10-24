@@ -46,6 +46,17 @@ def _now_iso() -> str:
 
 
 @require_GET
+def ping(request):
+    """Respuesta minima para el health check del orquestador.
+
+    A diferencia de ``/api/health/``, no dice nada del estado de los
+    proveedores ni de la ingesta: solo confirma que la app responde. Se
+    deja accesible sin proteccion con usuario para que el health check
+    externo (Coolify) pueda consultarlo sin credenciales.
+    """
+    return _json({"status": "ok"})
+
+
 def health(request):
     """Estado de la aplicacion y del proceso de ingesta."""
     snapshot = latest_snapshot()

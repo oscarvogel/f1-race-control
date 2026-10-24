@@ -1,0 +1,33 @@
+# Contexto de build: lo que no hace falta (o no debe) entrar en la imagen.
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Ejecucion local: logs, PIDs y el token de Coolify
+.run/
+
+# Dependencias (se instalan dentro de la imagen)
+**/node_modules
+backend/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+
+# Artefactos locales
+frontend/dist
+backend/db.sqlite3
+backend/db.sqlite3-journal
+backend/staticfiles
+backend/media
+
+# Secretos: el .env NUNCA va dentro de la imagen
+.env
+.env.local
+*.env
+!.env.example
+
+# Documentacion y notas (no hacen falta en runtime)
+docs/*.md
+README.md

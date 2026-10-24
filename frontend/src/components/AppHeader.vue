@@ -1,21 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed } from 'vue'
 import { Activity, Clock, MapPin, Radio, Settings2, Wifi, WifiOff } from '@lucide/vue'
 import StatusBadge from './StatusBadge.vue'
 import SessionSelector from './SessionSelector.vue'
+import { useClock } from '@/composables/useClock'
 import { useRaceStore } from '@/stores/race'
 
 const store = useRaceStore()
 
-const now = ref(new Date())
-let timer: number | null = null
-
-onMounted(() => {
-  timer = window.setInterval(() => (now.value = new Date()), 1000)
-})
-onBeforeUnmount(() => {
-  if (timer !== null) window.clearInterval(timer)
-})
+/** Reloj compartido con el resto de la interfaz. */
+const now = useClock()
 
 const pad = (value: number) => String(value).padStart(2, '0')
 

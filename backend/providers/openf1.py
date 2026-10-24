@@ -596,21 +596,55 @@ class OpenF1Provider(TimingProvider):
         ]
 
     async def get_positions(self, session_key: str | int | None = None) -> list[dict[str, Any]]:
-        """Posiciones GPS. La API puede devolver valores nulos si el feed no los trae."""
+        """Posiciones GPS: la **ultima muestra de cada piloto**.
+
+        El endpoint ``location`` devuelve una fila por piloto e instante de
+        toda la sesion (unas 80.000 filas para una hora con 22 pilotos). Para
+        dibujar el mapa de un replay alcanza con donde termino cada uno, asi
+        que se reduce a una fila por piloto: 22 puntos en lugar de 80.000,
+        sin que el snapshot guarde basura.
+
+        La API puede devolver valores nulos si el feed no los trae: en ese
+        caso la coordenada queda en ``None`` y el mapa no dibuja el auto, en
+        vez de dibujarlo en el origen (0,0).
+        """
         key = str(session_key or self._session_key or "")
         if not key:
             return []
         rows = await self._get_json("/location", {"session_key": key})
-        return [
-            {
-                "provider_id": self.provider_id,
-                "driver_number": str(row.get("driver_number")),
-                "timestamp": parse_timestamp(row.get("date")).isoformat()
-                if parse_timestamp(row.get("date"))
-                else None,
-                "x": to_float(row.get("x")),
-                "y": to_float(row.get("y")),
-                "z": to_float(row.get("z")),
-            }
-            for row in rows
-        ]
+
+        ultima: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            numero = str(row.get("driver_number") or "")
+            if not numero:
+                continue
+            anterior = ultima.get(numero)
+            if anterior is None or self._row_time(row) >= self._row_time(anterior):
+                ultima[numero] = row
+
+        posiciones: list[dict[str, Any]] = []
+        for numero, row in sorted(ultima.items(), key=lambda item: item[0]):
+            momento = parse_timestamp(row.get("date"))
+            posiciones.append(
+                {
+                    "provider_id": self.provider_id,
+                    "driver_number": numero,
+                    "timestamp": momento.isoformat() if momento else None,
+                    "source_timestamp": momento.isoformat() if momento else None,
+                    "x": to_float(row.get("x")),
+                    "y": to_float(row.get("y")),
+                    "z": to_float(row.get("z")),
+                    "lap": to_int(row.get("lap")),
+                    "number_of_laps": to_int(row.get("number_of_laps")),
+                    "speed": None,
+                    "gear": None,
+                    "status": None,
+                }
+            )
+        return posiciones
+
+    @staticmethod
+    def _row_time(row: dict[str, Any]) -> float:
+        """Instante de una fila de `location`, para quedarse con la ultima."""
+        momento = parse_timestamp(row.get("date"))
+        return momento.timestamp() if momento else 0.0

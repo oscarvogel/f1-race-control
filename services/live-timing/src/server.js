@@ -14,7 +14,7 @@ const { createTyresRouter } = require('./routes/tyres');
 const { createDriversRouter } = require('./routes/drivers');
 const { createSessionRouter } = require('./routes/session');
 // [Race Center addition] Route for the CarData channel (track positions + telemetry).
-const { createCarDataRouter, createTrackStatusRouter } = require('./routes/car-data');
+const { createCarDataRouter, createTrackStatusRouter, createPositionsRouter } = require('./routes/car-data');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,7 +28,7 @@ const HOST = process.env.HOST || '127.0.0.1';
 // Requests without an Origin header (server-to-server, i.e. the Django backend) are allowed.
 const CORS_ORIGINS = (
     process.env.CORS_ORIGINS ||
-    'http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8000,http://localhost:8000'
+    'http://127.0.0.1:5174,http://localhost:5174,http://127.0.0.1:8000,http://localhost:8000'
 )
     .split(',')
     .map((origin) => origin.trim())
@@ -69,6 +69,8 @@ app.use('/api', createSessionRouter(f1Client));
 // [Race Center addition] Live car positions and telemetry.
 app.use('/api/car-data', createCarDataRouter(f1Client));
 app.use('/api/track-status', createTrackStatusRouter(f1Client));
+// [Race Center addition] Live X/Y/Z coordinates of every car on track.
+app.use('/api/positions', createPositionsRouter(f1Client));
 
 /**
  * GET /api/status

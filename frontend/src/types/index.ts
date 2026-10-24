@@ -53,6 +53,9 @@ export interface TimingEntry {
   interval_to_ahead: string | null
   time_diff_to_fastest: string | null
   time_diff_to_position_ahead: string | null
+  /** Segmento (Q1/Q2/Q3) del que viene cada gap, cuando el feed lo dice. */
+  time_diff_to_fastest_segment: string | null
+  time_diff_to_position_ahead_segment: string | null
   number_of_laps: number | null
   number_of_pit_stops: number | null
   in_pit: boolean
@@ -80,6 +83,9 @@ export interface CarPosition {
   gear: number | null
   status: string | null
   source_timestamp: string | null
+  /** Vuelta registrada (dato historico de OpenF1). */
+  lap?: number | null
+  number_of_laps?: number | null
 }
 
 export interface TrackStatus {

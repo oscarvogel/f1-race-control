@@ -1,10 +1,13 @@
 # Race Center — dependencias backend
-# Todas con soporte para Python 3.12 (WSL Ubuntu).
+# Todas con soporte para Python 3.12 (WSL Ubuntu y contenedor).
 Django>=5.2,<7.0
 djangorestframework>=3.15
 django-cors-headers>=4.4
 httpx>=0.27
 python-dotenv>=1.0
+
+# Servidor WSGI para el despliegue en contenedor (runserver es solo de desarrollo).
+gunicorn>=23.0
 
 # testing
 pytest>=8.0

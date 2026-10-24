@@ -92,7 +92,9 @@ if DATABASE_ENGINE == "sqlite":
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
+            # En el contenedor la base vive en el volumen persistente, no en el
+            # codigo: si no, cada redespliegue perderia el historico.
+            "NAME": os.environ.get("DJANGO_DB_PATH", str(BASE_DIR / "db.sqlite3")),
             "OPTIONS": {"timeout": 20},
         }
     }
@@ -117,7 +119,27 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# --------------------------------------------------------------------------- #
+# SQLite con dos procesos (ingesta + API)
+#
+# En el contenedor (y tambien en local) hay dos procesos escribiendo y
+# leyendo la misma base: la ingesta escribe los snapshots y la API los
+# sirve. Sin WAL aparecen "database is locked" de forma intermitente.
+# --------------------------------------------------------------------------- #
+if DATABASE_ENGINE == "sqlite":
+    from django.db.backends.signals import connection_created
+    from django.dispatch import receiver
+
+    @receiver(connection_created)
+    def _activar_wal(sender, connection, **kwargs):  # pragma: no cover
+        if connection.vendor != "sqlite":
+            return
+        with connection.cursor() as cursor:
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
 
 # --------------------------------------------------------------------------- #
 # DRF
@@ -165,6 +187,16 @@ if ENABLE_LAN_ACCESS:
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
+
+# --------------------------------------------------------------------------- #
+# Detras de un proxy inverso (Coolify / nginx terminates TLS)
+#
+# Sin esto, Django cree que la peticion llego por HTTP y genera URLs y
+# redirecciones http:// en vez de https://.
+# --------------------------------------------------------------------------- #
+if env_bool("TRUST_PROXY_SSL", False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    USE_X_FORWARDED_HOST = True
 
 # --------------------------------------------------------------------------- #
 # Proveedores de datos

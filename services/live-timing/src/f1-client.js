@@ -28,6 +28,9 @@ const SUBSCRIBE_CHANNELS = [
     'TeamRadio',
     // [Race Center addition] CarData carries per-car X/Y/Z track coordinates and telemetry.
     'CarData',
+    // [Race Center addition] Positions carries the per-car X/Y/Z coordinates on
+    // track. `CarData` only carries the telemetry (speed, rpm, gear...).
+    'Positions',
     // [Race Center addition] TrackStatus carries the track flags and safety car state.
     'TrackStatus'
 ];
@@ -50,6 +53,10 @@ class F1LiveClient {
         this.teamRadio = [];
         // [Race Center addition] Live car positions and telemetry (X/Y/Z, speed, rpm, gear...).
         this.carData = {};
+        // [Race Center addition] Live car coordinates (X/Y/Z) on the track.
+        // `CarData` carries the telemetry (speed, rpm, gear, throttle, brake);
+        // the *coordinates* come in their own channel, `Positions`.
+        this.positions = {};
         // [Race Center addition] Track flags and safety car state.
         this.trackStatus = {};
 
@@ -298,6 +305,13 @@ class F1LiveClient {
                 deepMerge(this.carData, data);
                 this.broadcast({ type: 'CarData', data: this.carData });
                 break;
+            case 'Positions':
+                // [Race Center addition] Track coordinates (X/Y/Z) of every car.
+                // This is the channel that actually carries the positions:
+                // `CarData` only carries the telemetry.
+                deepMerge(this.positions, data);
+                this.broadcast({ type: 'Positions', data: this.positions });
+                break;
             case 'TrackStatus':
                 // [Race Center addition] Track flags and safety car state.
                 deepMerge(this.trackStatus, data);
@@ -352,6 +366,14 @@ class F1LiveClient {
      */
     getCarData() {
         return this.carData;
+    }
+
+    /**
+     * [Race Center addition] Latest known track coordinates (X/Y/Z) of every car.
+     * @returns {Object} The in-memory Positions channel state.
+     */
+    getPositions() {
+        return this.positions;
     }
 
     /**

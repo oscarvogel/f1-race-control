@@ -406,6 +406,9 @@ async def build_historical_snapshot(session_key: str) -> dict[str, Any] | None:
         race_control = await _fetch_optional(
             "control de carrera", lambda: provider.get_race_control(session_key), [], warnings
         )
+        positions = await _fetch_optional(
+            "posiciones en pista", lambda: provider.get_positions(session_key), [], warnings
+        )
     finally:
         await provider.disconnect()
 
@@ -419,7 +422,7 @@ async def build_historical_snapshot(session_key: str) -> dict[str, Any] | None:
         "weather": weather.as_dict() if weather else None,
         "race_control": [event.as_dict() for event in race_control],
         "tyres": [stint.as_dict() for stint in stints],
-        "positions": [],
+        "positions": [dict(position) for position in positions],
         "track_status": None,
         "warnings": warnings,
         "sources": {
@@ -429,7 +432,7 @@ async def build_historical_snapshot(session_key: str) -> dict[str, Any] | None:
             "weather": provider.provider_id,
             "race_control": provider.provider_id,
             "tyres": provider.provider_id,
-            "positions": None,
+            "positions": provider.provider_id if positions else None,
             "track_status": None,
         },
         "provider_status": [],

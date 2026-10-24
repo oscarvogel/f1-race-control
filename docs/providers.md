@@ -60,6 +60,54 @@ Todos respondieron `HTTP 200` con datos reales de Austin 2026:
   a `0.000`, porque un gap de cero es un dato real.
 - `Retired`, `InPit`, `Stopped` llegan como booleanos; `New` de los
   neumáticos llega como cadena `"true"`/`"false"`.
+- **En clasificación los gaps vienen dentro de `Stats`**, no en el nivel
+  superior. `Stats` llega como **dict** `{"0": {...}, "1": {...}}` o como
+  **lista** de 3, y el valor útil **no siempre está en el índice 0**: un piloto
+  que hizo su tiempo en Q2 lo tiene en el índice 1. Hay que recorrer todos los
+  segmentos y quedarse con el último que tenga dato (el más reciente que
+  publicó F1 para ese piloto).
+- **Durante el knockout (Q3) el feed vacía `BestLapTime`**: pasa a
+  `{"Value": "", "Lap": N, "_deleted": ["Lap"]}` porque ese campo sigue el
+  segmento en curso, no la sesión. La mejor vuelta del piloto se calcula
+  comparando ese valor con los mejores por segmento (`BestLapTimes`).
+- **Para un piloto en pista**, el feed escribe el delta en vivo en el primer
+  slot de `Stats` aunque su segmento actual sea el segundo. Por eso la
+  etiqueta de segmento (Q1/Q2/Q3) de un gap solo se muestra si el piloto tiene
+  una vuelta completada en ese segmento.
+
+### Qué canales publica el feed (sondeado el 24/10/2026)
+
+La suscripción incluye `CarData`, `Positions` y `TrackStatus` (añadidos con el
+parche de ampliación). Lo que se comprobó **contra el feed real**, con la
+clasificación de Austin 2026 en curso:
+
+| Canal | ¿Llega? | Nota |
+|---|---|---|
+| `TimingData`, `TimingDataF1`, `TimingAppData` | sí | clasificación y stints |
+| `WeatherData`, `TimingStats` | sí | |
+| `DriverList`, `SessionInfo`, `RaceControlMessages`, `TeamRadio` | en el snapshot inicial | |
+| `TrackStatus` | **sí** | `{"Status":"1","Message":"AllClear"}` |
+| `ExtrapolatedClock`, `AudioStreams` | en el snapshot inicial | |
+| `CarData`, `Positions`, `Position`, `CarStatus`, `Clock`, `LapCount` | **no** | suscripción válida, el feed no publica nada |
+
+**Conclusión:** la suscripción es correcta (el propio `TrackStatus`, añadido por
+el mismo parche, sí llega) pero **durante la clasificación el feed no publica
+coordenadas**. No es un fallo del código: es lo que hace la fuente. Por eso el
+mapa del circuito no puede mostrar los autos en vivo durante la quali, y la
+interfaz lo dice en pantalla en lugar de dejar el panel vacío.
+
+La forma de comprobarlo (sonda que replica el handshake real del cliente, en
+`.run/probe_feed.js`):
+
+```bash
+cd /mnt/c/Programacion/proyectos/actives/f1-race-center
+NODE_PATH=services/live-timing/node_modules node .run/probe_feed.js
+```
+
+> La primera versión de la sonda estaba rota: tomaba `frame.target` como
+> nombre del canal, pero en SignalR Core el `target` siempre es `"feed"` y el
+> canal va en `frame.arguments[0]`. Con ese error hasta el grupo de control
+> parecía "sin mensajes" y la conclusión sobre `Positions` era falsa.
 
 ### Parche de seguridad aplicado
 
@@ -77,18 +125,24 @@ const server = app.listen(PORT, HOST, () => { ... });
 
 ```js
 // [Race Center patch] Restrict CORS to loopback origins instead of cors().
-const CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://127.0.0.1:5173,...')
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://127.0.0.1:5174,...')
 ```
 
 Con `HOST=0.0.0.0` se recupera el comportamiento original.
 
 ### Limitaciones
 
-- **Sin telemetría de vehículo** (velocidad, RPM, marcha, acelerador, freno,
-  DRS) y **sin coordenadas GPS**. El feed de cronometraje no las trae.
-  `get_telemetry()` y `get_positions()` lanzan `UnsupportedCapability` en vez
-  de inventar datos. Para histórico sí hay `car_data` y `location` en
-  OpenF1.
+- **Sin coordenadas GPS durante la clasificación.** Los canales `CarData` y
+  `Positions` están suscrito y el feed acepta la suscripción, pero **no
+  publica mensajes de esos canales** mientras la sesión es de clasificación
+  (verificado el 24/10/2026 con la quali de Austin 2026 en curso). El mapa del
+  circuito, entonces, no muestra autos en vivo: lo dice en pantalla. En
+  carrera hay que volver a comprobarlo (queda como pendiente en la bitácora).
+- **Telemetría de vehículo** (velocidad, RPM, marcha, acelerador, freno, DRS):
+  llega en el mismo canal `CarData`, con la misma limitación anterior.
+- Para histórico sí hay `car_data` y `location` en OpenF1: el replay guarda
+  **una fila por piloto** (la última posición conocida), no las 403.062
+  muestras GPS de la sesión.
 - **Sin histórico de vueltas por piloto** en vivo: `/api/laps` es el contador
   de vueltas de la sesión, no el listado de vueltas. `get_laps()` del
   adaptador live no está soportado.
@@ -133,6 +187,35 @@ Documentación: <https://openf1.org/docs/>
    "sin resultados" y no como "endpoint caído".
 3. `sessions` no tiene `year` para 2025/2026 con `limit`, pero sí sin `limit`.
 4. `location` puede devolver `x=0, y=0, z=0` cuando el feed no trae GPS real.
+5. **Limite de tasa por IP.** Una rafaga corta agota la cuota y la respuesta es
+   `429` con la cabecera `retry-after: 60`. Medido: 2 s entre peticiones, 15/15
+   correctos; 1 s, 20/20; 0.5 s, 25/25. El adaptador respeta ese `retry-after`,
+   separa las peticiones 1 s y **no emite ninguna durante el cooldown**.
+6. **Durante una sesion de F1 en curso se bloquea TODO**, incluidas las
+   sesiones ya terminadas. Verificado el 24/10/2026 a las 20:44 UTC, al
+   arrancar la clasificacion:
+
+   ```
+   {"detail": "Live F1 session in progress. Global API access (including past
+   sessions) is restricted to authenticated users until the session ends.
+   Get an API key here: https://buy.stripe.com/..."}
+   ```
+
+   Es un `401`, no un `429`. El efecto: durante la carrera no se puede
+   consultar ni el catalogo ni una sesion que no se haya descargado antes.
+   **Como lo resuelve Race Center:**
+
+   - El catalogo de sesiones se guarda en la base (`scope = "catalog"`) y se
+     usa como respaldo, marcado como `stale`.
+   - El calendario sale de **Jolpica**, que no se bloquea.
+   - Las claves de sesion se recuperan de la tabla `Session`, o sea de las que
+     ya se habian descargado.
+   - Los snapshots historicos ya descargados se sirven desde la base sin
+     volver a preguntar.
+
+   **Lo que queda fuera:** una sesion historica que nunca se haya descargado no
+   es consultable durante una sesion en vivo sin clave de OpenF1
+   (`OPENF1_API_KEY`).
 
 ### Austin 2026 en OpenF1
 
@@ -168,6 +251,24 @@ el `ProviderManager` nunca lo elige para datos en vivo.
 
 Verificado el calendario 2026: la ronda 18 es el United States Grand Prix en
 Austin, con clasificación el **2026-10-24 a las 21:00:00Z**.
+
+### Papel actual: calendario de respaldo
+
+Cuando OpenF1 bloquea el acceso (ver la limitacion 6 de la seccion 2), el
+calendario de sesiones se construye desde Jolpica, que publica la hora de
+inicio de cada sesion del fin de semana:
+
+| Campo de la ronda | Ejemplo (ronda 18 de 2026) |
+|---|---|
+| `FirstPractice` | 2026-10-23 17:30:00Z |
+| `SecondPractice` | 2026-10-23 21:00:00Z |
+| `ThirdPractice` | 2026-10-24 17:30:00Z |
+| `Qualifying` | 2026-10-24 21:00:00Z |
+| `date` + `time` (carrera) | 2026-10-25 20:00:00Z |
+
+Eso es lo que permite que la cuenta regresiva a la proxima sesion siga
+funcionando durante la carrera. Jolpica no publica el fin de cada sesion: ese
+campo queda vacio en vez de estimarse.
 
 ---
 

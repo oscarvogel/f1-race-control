@@ -171,9 +171,9 @@ def _standings_payload() -> dict:
                 ],
                 "Speeds": {"I1": {"Value": "195"}, "ST": {"Value": "279"}},
                 "BestLapTimes": {
-                    "0": {"Value": "1:35.100"},
-                    "1": {"Value": "1:34.893"},
-                    "2": {"Value": "1:34.500"},
+                    "0": {"Value": "1:35.100", "Lap": 10},
+                    "1": {"Value": "1:34.893", "Lap": 12},
+                    "2": {"Value": "1:34.500", "Lap": 14},
                 },
             },
             "1": {
@@ -231,8 +231,11 @@ def test_normaliza_la_clasificacion_del_proveedor_live():
 
     leader = entries[0]
     assert leader.position == 1
-    assert leader.best_lap_time == pytest.approx(94.893)
-    assert leader.best_lap_number == 12
+    # La mejor vuelta es el mejor tiempo de todos los segmentos: el valor de
+    # nivel superior (`BestLapTime`) sigue el segmento en curso y se vacia
+    # durante el knockout de Q3.
+    assert leader.best_lap_time == pytest.approx(94.5)
+    assert leader.best_lap_number == 14
     assert leader.best_lap_overall_fastest is True
     assert leader.number_of_laps == 21
     assert leader.driver is not None
@@ -332,3 +335,329 @@ def test_combo_de_pneumatico_y_posicion():
     assert entries[0].tyre_compound == "MEDIUM"
     assert entries[0].tyre_age == 6
     assert entries[0].tyre_new is False
+
+
+# --------------------------------------------------------------------------- #
+# 8. Gaps de clasificacion: `Stats` como diccionario o como lista
+# --------------------------------------------------------------------------- #
+
+
+def _timing_entry(provider, line):
+    """Normaliza una sola linea de clasificacion con el proveedor de prueba."""
+    import asyncio
+
+    payload = {"Leaderboard": list(line.keys()), "Lines": line}
+
+    async def fake_get(path: str, *args, **kwargs):
+        return payload
+
+    provider._get_json = fake_get  # type: ignore[assignment]
+    entries = asyncio.run(provider.get_timing())
+    return entries[0]
+
+
+def test_el_gap_se_lee_de_stats_como_diccionario():
+    """El feed entrega `Stats` como mapa indexado por segmento."""
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "44": {
+                "RacingNumber": "44",
+                "Position": "1",
+                "Stats": {"0": {"TimeDiffToFastest": "+0.167",
+                                "TimeDifftoPositionAhead": "+0.167"}},
+            }
+        },
+    )
+
+    assert entry.time_diff_to_fastest == "+0.167"
+    assert entry.time_diff_to_position_ahead == "+0.167"
+    assert entry.time_diff_to_fastest_segment == "0"
+
+
+def test_el_gap_se_lee_de_stats_como_lista():
+    """El feed tambien entrega `Stats` como lista de tres segmentos."""
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "44": {
+                "RacingNumber": "44",
+                "Position": "1",
+                "Stats": [
+                    {"TimeDiffToFastest": "+0.015",
+                     "TimeDifftoPositionAhead": "+0.015"},
+                    {"TimeDiffToFastest": "", "TimeDifftoPositionAhead": ""},
+                    {"TimeDiffToFastest": "", "TimeDifftoPositionAhead": ""},
+                ],
+            }
+        },
+    )
+
+    assert entry.time_diff_to_fastest == "+0.015"
+    assert entry.time_diff_to_fastest_segment == "0"
+
+
+def test_el_gap_no_sale_solo_del_primer_segmento():
+    """Un piloto que hizo su tiempo en Q2 lo tiene en el indice 1, no en el 0.
+
+    Antes esto dejaba la columna de gap vacia: el backend solo miraba
+    `Stats[0]`, que en ese caso estaba en blanco.
+    """
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "44": {
+                "RacingNumber": "44",
+                "Position": "1",
+                "Stats": [
+                    {"TimeDiffToFastest": "", "TimeDifftoPositionAhead": ""},
+                    {"TimeDiffToFastest": "+0.086",
+                     "TimeDifftoPositionAhead": "+0.071"},
+                    {"TimeDiffToFastest": "", "TimeDifftoPositionAhead": ""},
+                ],
+            }
+        },
+    )
+
+    assert entry.time_diff_to_fastest == "+0.086"
+    assert entry.time_diff_to_position_ahead == "+0.071"
+    assert entry.time_diff_to_fastest_segment == "1"
+
+
+def test_el_gap_toma_el_ultimo_segmento_con_dato():
+    """Con Q1 y Q2 poblados, manda el gap del segmento mas reciente."""
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "44": {
+                "RacingNumber": "44",
+                "Position": "1",
+                "Stats": [
+                    {"TimeDiffToFastest": "+0.500", "TimeDifftoPositionAhead": "+0.500"},
+                    {"TimeDiffToFastest": "+0.200", "TimeDifftoPositionAhead": "+0.200"},
+                ],
+            }
+        },
+    )
+
+    assert entry.time_diff_to_fastest == "+0.200"
+    assert entry.time_diff_to_fastest_segment == "1"
+
+
+def test_sin_gap_publicado_no_se_inventa_el_segmento():
+    """Si el feed no publica ningun gap, el segmento queda en None."""
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "44": {
+                "RacingNumber": "44",
+                "Position": "1",
+                "Stats": {"0": {"TimeDifftoPositionAhead": ""}},
+            }
+        },
+    )
+
+    assert entry.time_diff_to_fastest is None
+    assert entry.time_diff_to_fastest_segment is None
+
+
+# --------------------------------------------------------------------------- #
+# 9. Fin de sesion: la hora local del circuito convertida a UTC
+# --------------------------------------------------------------------------- #
+
+
+def test_el_fin_de_sesion_usa_el_desfase_del_circuito():
+    """`EndDate` viene en hora local del circuito: se convierte con GmtOffset.
+
+    Sin esta conversion la cuenta regresiva del final de la clasificacion
+    estaria corrida por el desfase del circuito (5 horas en Austin).
+    """
+    import asyncio
+
+    provider = _provider()
+    payload = {
+        "Session": {
+            "Key": 11392,
+            "Type": "Qualifying",
+            "Name": "Qualifying",
+            "SessionStatus": "Started",
+            "StartDate": "2026-10-24T16:00:00",
+            "EndDate": "2026-10-24T17:00:00",
+            "GmtOffset": "-05:00:00",
+            "Meeting": {
+                "Key": 1297,
+                "Name": "United States Grand Prix",
+                "Location": "Austin",
+                "Number": 18,
+                "Circuit": {"Key": 9, "ShortName": "Austin"},
+                "Country": {"Key": 19, "Code": "USA", "Name": "United States"},
+            },
+        }
+    }
+
+    async def fake_get(path: str, *args, **kwargs):
+        return payload
+
+    provider._get_json = fake_get  # type: ignore[assignment]
+
+    session = asyncio.run(provider.get_session())
+    assert session is not None
+    assert session.start_time_utc is not None
+    assert session.end_time_utc is not None
+    # 16:00 en Austin (UTC-5) es 21:00 UTC; 17:00 local es 22:00 UTC.
+    assert session.start_time_utc.hour == 21
+    assert session.end_time_utc.hour == 22
+    assert session.end_time_utc.minute == 0
+    assert session.gmt_offset == "-05:00:00"
+
+
+def test_sin_hora_de_fin_no_se_inventa():
+    """Sin `EndDate` el fin de sesion queda en None, no en una fecha inventada."""
+    import asyncio
+
+    provider = _provider()
+    payload = {
+        "Session": {
+            "Key": 11392,
+            "Type": "Qualifying",
+            "SessionStatus": "Started",
+            "StartDate": "2026-10-24T16:00:00",
+            "GmtOffset": "-05:00:00",
+            "Meeting": {"Key": 1297, "Circuit": {"Key": 9}},
+        }
+    }
+
+    async def fake_get(path: str, *args, **kwargs):
+        return payload
+
+    provider._get_json = fake_get  # type: ignore[assignment]
+
+    session = asyncio.run(provider.get_session())
+    assert session is not None
+    assert session.end_time_utc is None
+
+
+# --------------------------------------------------------------------------- #
+# 10. Posiciones GPS del replay: una fila por piloto
+# --------------------------------------------------------------------------- #
+
+
+def test_las_posiciones_historicas_quedan_en_una_fila_por_piloto():
+    """De una sesion entera se conserva la ultima muestra de cada piloto.
+
+    El endpoint `location` devuelve una fila por piloto e instante (unas
+    80.000 por hora). Guardar todo en el snapshot lo infla sin ganar nada:
+    para dibujar el mapa alcanza con donde termino cada auto.
+    """
+    import asyncio
+
+    from providers.openf1 import OpenF1Provider
+
+    provider = OpenF1Provider(base_url="http://127.0.0.1:9")  # nunca se conecta
+    filas = [
+        {"driver_number": 44, "date": "2026-10-23T17:31:00Z", "x": 100.0, "y": 200.0, "z": 1.0},
+        {"driver_number": 44, "date": "2026-10-23T17:32:00Z", "x": 110.0, "y": 210.0, "z": 2.0},
+        {"driver_number": 1, "date": "2026-10-23T17:31:30Z", "x": 300.0, "y": 400.0, "z": 3.0},
+        {"driver_number": 1, "date": "2026-10-23T17:32:30Z", "x": 310.0, "y": 410.0, "z": 4.0},
+    ]
+
+    async def fake_get(path: str, *args, **kwargs):
+        assert path == "/location"
+        return filas
+
+    provider._get_json = fake_get  # type: ignore[assignment]
+
+    posiciones = asyncio.run(provider.get_positions("11389"))
+
+    assert len(posiciones) == 2
+    por_piloto = {p["driver_number"]: p for p in posiciones}
+    assert por_piloto["44"]["x"] == pytest.approx(110.0)
+    assert por_piloto["44"]["y"] == pytest.approx(210.0)
+    assert por_piloto["1"]["x"] == pytest.approx(310.0)
+    assert por_piloto["1"]["y"] == pytest.approx(410.0)
+    # La coordenada viene con su marca de tiempo.
+    assert por_piloto["44"]["timestamp"] is not None
+
+
+def test_una_posicion_sin_coordenadas_no_se_inventa():
+    """Si OpenF1 devuelve x/y nulos, quedan en None: no se pone (0,0)."""
+    import asyncio
+
+    from providers.openf1 import OpenF1Provider
+
+    provider = OpenF1Provider(base_url="http://127.0.0.1:9")
+    filas = [{"driver_number": 44, "date": "2026-10-23T17:32:00Z", "x": None, "y": None, "z": None}]
+
+    async def fake_get(path: str, *args, **kwargs):
+        return filas
+
+    provider._get_json = fake_get  # type: ignore[assignment]
+
+    posiciones = asyncio.run(provider.get_positions("11389"))
+    assert posiciones[0]["x"] is None
+    assert posiciones[0]["y"] is None
+
+
+# --------------------------------------------------------------------------- #
+# 11. Mejor vuelta cuando el feed vacia el valor global (knockout de Q3)
+# --------------------------------------------------------------------------- #
+
+
+def test_la_mejor_vuelta_no_se_pierde_cuando_el_feed_vacia_el_valor_global():
+    """Durante el knockout el feed vacia `BestLapTime`.
+
+    Se ha visto en la quali de Austin 2026: el feed manda
+    ``{"Value": "", "Lap": 11, "_deleted": ["Lap"]}`` para los pilotos que aun
+    no hicieron su vuelta de Q3. Si solo se mirara ese campo, la columna
+    "MEJOR VUELTA" quedaria vacia aunque el piloto tenga un Q1 o un Q2.
+    """
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "12": {
+                "RacingNumber": "12",
+                "Position": "2",
+                "BestLapTime": {"Value": "", "Lap": 11, "_deleted": ["Lap"]},
+                "BestLapTimes": {
+                    "0": {"Value": "1:35.390", "Lap": 5},
+                    "1": {"Value": "1:34.278", "Lap": 11},
+                    "2": {"Value": ""},
+                },
+            }
+        },
+    )
+
+    assert entry.best_lap_time == pytest.approx(94.278)
+    assert entry.best_lap_number == 11
+    assert entry.best_lap_times["Q1"] == pytest.approx(95.390)
+    assert entry.best_lap_times["Q2"] == pytest.approx(94.278)
+    # El segmento Q3 existe pero no tiene tiempo: no se inventa.
+    assert entry.best_lap_times["Q3"] is None
+
+
+def test_la_mejor_vuelta_toma_el_mas_rapido_de_los_segmentos():
+    """Si el feed trae un Q1 y un Q2, la mejor vuelta es el menor de los dos."""
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "12": {
+                "RacingNumber": "12",
+                "Position": "2",
+                "BestLapTime": {"Value": "", "Lap": 11},
+                "BestLapTimes": {
+                    "0": {"Value": "1:35.390", "Lap": 5},
+                    "1": {"Value": "1:34.278", "Lap": 11},
+                },
+            }
+        },
+    )
+
+    assert entry.best_lap_time == pytest.approx(94.278)
+    assert entry.best_lap_number == 11

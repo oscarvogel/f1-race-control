@@ -360,6 +360,11 @@ class TimingEntry:
     interval_to_ahead: str | None = None
     time_diff_to_fastest: str | None = None
     time_diff_to_position_ahead: str | None = None
+    # Segmento de clasificacion (Q1/Q2/Q3) del que viene cada gap. El feed
+    # publica los gaps por segmento, asi que sin esto no se puede saber si un
+    # "+0.015" es de Q1 o de Q3.
+    time_diff_to_fastest_segment: str | None = None
+    time_diff_to_position_ahead_segment: str | None = None
     number_of_laps: int | None = None
     number_of_pit_stops: int | None = None
     in_pit: bool = False
@@ -394,6 +399,8 @@ class TimingEntry:
             "interval_to_ahead": self.interval_to_ahead,
             "time_diff_to_fastest": self.time_diff_to_fastest,
             "time_diff_to_position_ahead": self.time_diff_to_position_ahead,
+            "time_diff_to_fastest_segment": self.time_diff_to_fastest_segment,
+            "time_diff_to_position_ahead_segment": self.time_diff_to_position_ahead_segment,
             "number_of_laps": self.number_of_laps,
             "number_of_pit_stops": self.number_of_pit_stops,
             "in_pit": self.in_pit,

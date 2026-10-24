@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ChevronDown, ChevronUp } from '@lucide/vue'
+import { ChevronDown, ChevronUp, Clock } from '@lucide/vue'
+import { useClock } from '@/composables/useClock'
 import { useRaceStore, type SortKey } from '@/stores/race'
 import type { TimingEntry } from '@/types'
 
 const store = useRaceStore()
+
+/** Reloj compartido: la cuenta regresiva no puede ir por detras de la cabecera. */
+const now = useClock()
+
+const pad = (value: number) => String(value).padStart(2, '0')
 
 const COMPOUND_STYLE: Record<string, { label: string; bg: string; text: string }> = {
   SOFT: { label: 'S', bg: 'rgba(232,17,45,0.18)', text: '#ff5a6e' },
@@ -50,6 +56,73 @@ function gapOf(entry: TimingEntry): string {
 function intervalOf(entry: TimingEntry): string {
   return entry.interval_to_ahead ?? entry.time_diff_to_position_ahead ?? '—'
 }
+
+/**
+ * Segmento al que pertenece el gap (Q1/Q2/Q3).
+ *
+ * El feed publica los gaps por segmento de clasificacion. El indice llega
+ * crudo ("0", "1", "2") y solo se traduce cuando la sesion **es** una
+ * clasificacion: en carrera el indice "0" es la vuelta actual, y llamarle
+ * Q1 seria mentir.
+ *
+ * Ademas se exige que el piloto tenga una vuelta **completada** en ese
+ * segmento. Para quien esta en pista, el feed escribe el delta en vivo en
+ * el primer slot aunque su segmento actual sea el segundo: etiquetar ese
+ * valor "Q1" seria falso. Sin vuelta cerrada en ese segmento, el gap se
+ * muestra igual pero sin etiqueta.
+ */
+const SEGMENT_LABELS: Record<string, string> = { '0': 'Q1', '1': 'Q2', '2': 'Q3' }
+
+function gapSegmentOf(entry: TimingEntry): string | null {
+  if (!store.isQualifying) return null
+  const index = entry.time_diff_to_fastest_segment ?? entry.time_diff_to_position_ahead_segment
+  if (!index) return null
+  const label = SEGMENT_LABELS[index]
+  if (!label) return null
+  const lap = entry.best_lap_times?.[label]
+  if (!lap || lap.time == null) return null
+  return label
+}
+
+/**
+ * Cuenta regresiva del final de la sesion en curso.
+ *
+ * El feed publica `SessionInfo.EndDate` en hora local del circuito, que el
+ * backend convierte a UTC con el `GmtOffset` de la propia F1. En
+ * clasificacion es el final del bloque Q1/Q2/Q3 completo.
+ *
+ * Solo se muestra mientras la sesion esta en curso: en una sesion ya
+ * terminada (o en una que todavia no empezo) la cuenta seria enganosa.
+ *
+ * Cuando el horario se agota pero la sesion sigue en curso (el ultimo piloto
+ * de Q3 todavia esta en pista), el contador no desaparece: pasa a "TIEMPO
+ * AGOTADO", que es lo que dice el cronometro de la F1.
+ */
+const sessionCountdown = computed<string | null>(() => {
+  if (!store.sessionIsActive) return null
+  const remaining = store.sessionEndsInMs(now.value.getTime())
+  if (remaining === null) return null
+  if (remaining <= 0) return '00:00:00'
+  const total = Math.floor(remaining / 1000)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
+})
+
+/** El tiempo se agota: el contador queda en rojo. */
+const countdownUrgent = computed(() => {
+  const remaining = store.sessionEndsInMs(now.value.getTime())
+  if (remaining === null) return false
+  return remaining <= 5 * 60 * 1000
+})
+
+/** Etiqueta del contador: el tiempo se cumplio o todavia queda. */
+const countdownLabel = computed(() => {
+  const remaining = store.sessionEndsInMs(now.value.getTime())
+  if (remaining === null) return ''
+  return remaining <= 0 ? 'TIEMPO AGOTADO' : 'FINALIZA EN'
+})
 
 function segmentTime(entry: TimingEntry, segment: 'Q1' | 'Q2' | 'Q3'): string {
   const value = entry.best_lap_times?.[segment]
@@ -126,6 +199,15 @@ function sortIcon(key: SortKey) {
     <header class="panel-title justify-between">
       <span>Clasificacion</span>
       <span class="flex items-center gap-2">
+        <span
+          v-if="sessionCountdown"
+          class="chip num gap-1.5 border-warn/40 text-warn"
+          :class="countdownUrgent ? 'border-bad/60 bg-bad/15 text-bad' : ''"
+          title="Tiempo que falta para que termine la sesion"
+        >
+          <Clock class="h-3 w-3" />
+          {{ countdownLabel }} {{ sessionCountdown }}
+        </span>
         <span class="chip">{{ sorted.length }} pilotos</span>
         <span v-if="store.dataState === 'HISTORICAL'" class="chip text-sky-300">
           Sesion finalizada
@@ -289,8 +371,17 @@ function sortIcon(key: SortKey) {
             </td>
 
             <td class="td">
-              <div class="num text-[12px] text-slate-300">
-                {{ gapOf(entry) }}
+              <div class="flex items-center gap-1.5">
+                <span class="num text-[12px] text-slate-300">
+                  {{ gapOf(entry) }}
+                </span>
+                <span
+                  v-if="gapSegmentOf(entry)"
+                  class="rounded bg-race-800/80 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-400"
+                  :title="`Gap del segmento ${gapSegmentOf(entry)}`"
+                >
+                  {{ gapSegmentOf(entry) }}
+                </span>
               </div>
               <div
                 v-if="intervalOf(entry) !== gapOf(entry) && intervalOf(entry) !== '—'"

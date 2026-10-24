@@ -86,7 +86,55 @@ function createTrackStatusRouter(f1Client) {
     return router;
 }
 
+/**
+ * Creates the Positions Express router.
+ *
+ * [Race Center addition] `CarData` carries the telemetry of each car
+ * (speed, rpm, gear, throttle, brake); the **coordinates on track** come in
+ * their own channel, `Positions`. Without this route the map had no dots to
+ * draw, because the upstream service did not subscribe to that channel.
+ *
+ * @param {F1LiveClient} f1Client - Active instance of F1LiveClient.
+ * @returns {express.Router} Express router instance.
+ */
+function createPositionsRouter(f1Client) {
+    const router = express.Router();
+
+    /**
+     * GET /api/positions
+     * Returns the latest X/Y/Z position of every car on track.
+     */
+    router.get('/', (req, res) => {
+        try {
+            const positions = f1Client.getPositions() || {};
+            const entries = positions.Entries || [];
+
+            const cars = (Array.isArray(entries) ? entries : Object.values(entries))
+                .filter((entry) => entry && (entry.Number !== undefined || entry.CarNumber !== undefined))
+                .map((entry) => ({
+                    RacingNumber: String(entry.Number ?? entry.CarNumber ?? ''),
+                    X: entry.X ?? null,
+                    Y: entry.Y ?? null,
+                    Z: entry.Z ?? null,
+                    Status: entry.Status ?? null
+                }))
+                .filter((car) => car.RacingNumber !== '');
+
+            res.status(200).json({
+                Cars: cars,
+                LastMessageAt: f1Client.getConnectionStatus().lastMessageAt
+            });
+        } catch (error) {
+            console.error('[API Error] Failed to retrieve car positions:', error);
+            res.status(500).json({ error: 'Internal server error while reading Positions.' });
+        }
+    });
+
+    return router;
+}
+
 module.exports = {
     createCarDataRouter,
-    createTrackStatusRouter
+    createTrackStatusRouter,
+    createPositionsRouter
 };
