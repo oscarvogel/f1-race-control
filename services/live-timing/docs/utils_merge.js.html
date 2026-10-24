@@ -1,0 +1,177 @@
+
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title> utils/merge.js</title>
+
+  <script src="https://cdn.jsdelivr.net/gh/google/code-prettify@master/loader/run_prettify.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="./build/entry.js"></script>
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+  <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+  <![endif]-->
+  <link href="https://fonts.googleapis.com/css?family=Roboto:100,400,700|Inconsolata,700" rel="stylesheet">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.6.3/css/all.css" integrity="sha384-UHRtZLI+pbxtHCWp1t77Bi1L4ZtiqrqD80Kn4Z8NTSRyMA2Fd33n5dQ8lWUE00s/" crossorigin="anonymous">
+  <link type="text/css" rel="stylesheet" href="https://jmblog.github.io/color-themes-for-google-code-prettify/themes/tomorrow-night.min.css">
+  <link type="text/css" rel="stylesheet" href="styles/app.min.css">
+  <link type="text/css" rel="stylesheet" href="styles/iframe.css">
+  <link type="text/css" rel="stylesheet" href="">
+  <script async defer src="https://buttons.github.io/buttons.js"></script>
+
+  
+</head>
+
+
+
+<body class="layout small-header">
+    <div id="stickyNavbarOverlay"></div>
+    
+
+<div class="top-nav">
+    <div class="inner">
+        <a id="hamburger" role="button" class="navbar-burger" aria-label="menu" aria-expanded="false">
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+        </a>
+        <div class="logo">
+            
+             
+                <a href="index.html">
+                    <h1 class="navbar-item">F1 Live Timing API</h1>
+                </a>
+            
+        </div>
+        <div class="menu">
+            
+            <div class="navigation">
+                <a
+                    href="index.html"
+                    class="link"
+                >
+                    Documentation
+                </a>
+                
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+    <div id="main">
+        <div
+            class="sidebar "
+            id="sidebarNav"
+        >
+            
+            <nav>
+                
+                    <h2><a href="index.html">Documentation</a></h2><div class="category"><h3>Global</h3><ul><li><a href="global.html#createDriversRouter">createDriversRouter</a></li><li><a href="global.html#createLeaderboardRouter">createLeaderboardRouter</a></li><li><a href="global.html#createSessionRouter">createSessionRouter</a></li><li><a href="global.html#createStandingsRouter">createStandingsRouter</a></li><li><a href="global.html#createTyresRouter">createTyresRouter</a></li><li><a href="global.html#deepMerge">deepMerge</a></li><li><a href="global.html#getDriverLeaderboard">getDriverLeaderboard</a></li><li><a href="global.html#getDriverStandings">getDriverStandings</a></li><li><a href="global.html#getDriverTyres">getDriverTyres</a></li><li><a href="global.html#getDriversDirectory">getDriversDirectory</a></li><li><a href="global.html#getEnrichedTeamRadio">getEnrichedTeamRadio</a></li><li><a href="global.html#getLiveLeaderboard">getLiveLeaderboard</a></li><li><a href="global.html#getLiveStandings">getLiveStandings</a></li><li><a href="global.html#getLiveTyres">getLiveTyres</a></li><li><a href="global.html#isPlainObject">isPlainObject</a></li><li><a href="global.html#sortRacingNumbers">sortRacingNumbers</a></li></ul></div>
+                
+            </nav>
+        </div>
+        <div class="core" id="main-content-wrapper">
+            <div class="content">
+                <header class="page-title">
+                    <p>Source</p>
+                    <h1>utils/merge.js</h1>
+                </header>
+                
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**
+ * @file merge.js
+ * @description Utility for deeply merging F1 SignalR Core delta payloads into an existing state tree.
+ * F1 SignalR uses a delta protocol where only changed fields in channels like TimingData or TimingAppData
+ * are sent in each message. Deep merging ensures that nested structures (such as Sectors, Speeds, or Stints)
+ * are cleanly updated without overwriting existing sibling fields.
+ */
+
+/**
+ * Checks if a value is a plain object (and not null, array, Date, etc.).
+ * @param {any} item - Value to check.
+ * @returns {boolean} True if the value is a plain object.
+ */
+function isPlainObject(item) {
+    return item !== null &amp;&amp; typeof item === 'object' &amp;&amp; !Array.isArray(item) &amp;&amp; !(item instanceof Date);
+}
+
+/**
+ * Deeply merges a source object (SignalR delta) into a target object (in-memory state).
+ * Modifies target directly and returns it. Does not modify key names or cases.
+ *
+ * @param {Object} target - The destination state object.
+ * @param {Object} source - The delta object to merge into target.
+ * @returns {Object} The merged target object.
+ */
+function deepMerge(target, source) {
+    if (!isPlainObject(target) || !isPlainObject(source)) {
+        return source !== undefined ? source : target;
+    }
+
+    for (const key of Object.keys(source)) {
+        const sourceVal = source[key];
+
+        if (sourceVal !== undefined) {
+            if (isPlainObject(sourceVal)) {
+                if (!isPlainObject(target[key])) {
+                    target[key] = {};
+                }
+                deepMerge(target[key], sourceVal);
+            } else if (Array.isArray(sourceVal)) {
+                // For arrays in SignalR payloads (e.g., RaceControlMessages or specific arrays),
+                // we perform a slice copy to replace the array cleanly.
+                target[key] = sourceVal.slice();
+            } else {
+                target[key] = sourceVal;
+            }
+        }
+    }
+
+    return target;
+}
+
+module.exports = {
+    deepMerge,
+    isPlainObject
+};
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+            </div>
+            
+            <footer class="footer">
+                <div class="content has-text-centered">
+                    <p>Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a></p>
+                    <p class="sidebar-created-by">
+                        <a href="https://github.com/SoftwareBrothers/better-docs" target="_blank">BetterDocs theme</a> provided with <i class="fas fa-heart"></i> by
+                        <a href="http://softwarebrothers.co" target="_blank">SoftwareBrothers - JavaScript Development Agency</a>
+                    </p>
+                </div>
+            </footer>
+            
+        </div>
+        <div id="side-nav" class="side-nav">
+        </div>
+    </div>
+<script src="scripts/app.min.js"></script>
+<script>PR.prettyPrint();</script>
+<script src="scripts/linenumber.js"> </script>
+
+
+</body>
+</html>

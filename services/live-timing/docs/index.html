@@ -1,0 +1,1262 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title> Home</title>
+
+  <script src="https://cdn.jsdelivr.net/gh/google/code-prettify@master/loader/run_prettify.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="./build/entry.js"></script>
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+  <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+  <![endif]-->
+  <link href="https://fonts.googleapis.com/css?family=Roboto:100,400,700|Inconsolata,700" rel="stylesheet">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.6.3/css/all.css" integrity="sha384-UHRtZLI+pbxtHCWp1t77Bi1L4ZtiqrqD80Kn4Z8NTSRyMA2Fd33n5dQ8lWUE00s/" crossorigin="anonymous">
+  <link type="text/css" rel="stylesheet" href="https://jmblog.github.io/color-themes-for-google-code-prettify/themes/tomorrow-night.min.css">
+  <link type="text/css" rel="stylesheet" href="styles/app.min.css">
+  <link type="text/css" rel="stylesheet" href="styles/iframe.css">
+  <link type="text/css" rel="stylesheet" href="">
+  <script async defer src="https://buttons.github.io/buttons.js"></script>
+
+  
+</head>
+
+
+
+<body class="layout small-header">
+    <div id="stickyNavbarOverlay"></div>
+    
+
+<div class="top-nav">
+    <div class="inner">
+        <a id="hamburger" role="button" class="navbar-burger" aria-label="menu" aria-expanded="false">
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+        </a>
+        <div class="logo">
+            
+             
+                <a href="index.html">
+                    <h1 class="navbar-item">F1 Live Timing API</h1>
+                </a>
+            
+        </div>
+        <div class="menu">
+            
+            <div class="navigation">
+                <a
+                    href="index.html"
+                    class="link"
+                >
+                    Documentation
+                </a>
+                
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+    <div id="main">
+        <div
+            class="sidebar "
+            id="sidebarNav"
+        >
+            
+            <nav>
+                
+                    <h2><a href="index.html">Documentation</a></h2><div class="category"><h3>Global</h3><ul><li><a href="global.html#createDriversRouter">createDriversRouter</a></li><li><a href="global.html#createLeaderboardRouter">createLeaderboardRouter</a></li><li><a href="global.html#createSessionRouter">createSessionRouter</a></li><li><a href="global.html#createStandingsRouter">createStandingsRouter</a></li><li><a href="global.html#createTyresRouter">createTyresRouter</a></li><li><a href="global.html#deepMerge">deepMerge</a></li><li><a href="global.html#getDriverLeaderboard">getDriverLeaderboard</a></li><li><a href="global.html#getDriverStandings">getDriverStandings</a></li><li><a href="global.html#getDriverTyres">getDriverTyres</a></li><li><a href="global.html#getDriversDirectory">getDriversDirectory</a></li><li><a href="global.html#getEnrichedTeamRadio">getEnrichedTeamRadio</a></li><li><a href="global.html#getLiveLeaderboard">getLiveLeaderboard</a></li><li><a href="global.html#getLiveStandings">getLiveStandings</a></li><li><a href="global.html#getLiveTyres">getLiveTyres</a></li><li><a href="global.html#isPlainObject">isPlainObject</a></li><li><a href="global.html#sortRacingNumbers">sortRacingNumbers</a></li></ul></div>
+                
+            </nav>
+        </div>
+        <div class="core" id="main-content-wrapper">
+            <div class="content">
+                <header class="page-title">
+                    <p></p>
+                    <h1>Home</h1>
+                </header>
+                
+
+
+
+    
+
+
+    <h3> </h3>
+
+
+
+
+
+
+
+
+
+
+    
+
+
+
+
+    <section>
+        <article><h1>F1 Live Timing REST API (<code>f1-livetiming-api</code>)</h1>
+<p>Host your own high-performance, real-time REST API server for Formula 1 live timing, driver standings, tyre strategies, and race control telemetry. Connected directly to the official F1 SignalR Core streaming endpoint (<code>livetiming.formula1.com</code>).</p>
+<hr>
+<h2>Core Architecture &amp; Data Principles</h2>
+<p>Designed for absolute data fidelity and zero-latency local consumption, <code>f1-livetiming-api</code> is built on three pillars:</p>
+<ol>
+<li><strong>Zero Field Renaming (1:1 PascalCase Fidelity)</strong>: Every telemetry property emitted by Formula 1 SignalR servers is preserved verbatim in its native <strong>PascalCase</strong> convention (<code>Position</code>, <code>GapToLeader</code>, <code>BestLapTime</code>, <code>TeamColour</code>, <code>Stints</code>, etc.). No artificial camelCase transformations or hardcoded driver dictionaries are used; driver identities are natively sourced from the official <code>DriverList</code> stream.</li>
+<li><strong>Background Delta-Merge Synchronisation</strong>: F1 SignalR operates via a delta protocol (transmitting only modified properties per tick). The server maintains an in-memory state store powered by a custom deep-merge engine (<a href="src/utils/merge.js">src/utils/merge.js</a>). Incoming deltas are seamlessly merged into server RAM in the background without overwriting adjacent objects or arrays.</li>
+<li><strong>Zero Outbound HTTP Overhead (100% Local Reads)</strong>: When your dashboard, frontend, or script queries any endpoint on this server, <strong>zero requests are dispatched to Formula 1 servers</strong>. All REST responses read straight from local memory in sub-millisecond time. You can poll the local endpoints at 1,000 requests per second with <strong>zero risk of rate-limiting or IP bans</strong>.</li>
+</ol>
+<pre class="prettyprint source"><code>[ Official F1 SignalR WebSocket (livetiming.formula1.com) ]
+                             │
+                             │ (Continuous streaming JSON deltas in background)
+                             ▼
+ [ src/f1-client.js ] ──► In-Memory Deep Merge via [ src/utils/merge.js ]
+                             │
+                             ▼ (Real-time RAM cache: TimingData, DriverList, TimingAppData...)
+ [ Specialized Express Route Handlers & Telemetry Services ]
+                             │
+                             ▼
+ [ HTTP Consumer ] ◄── GET /api/standings, /api/tyres, /api/weather, etc. (0ms latency)
+</code></pre>
+<hr>
+<h2>Specialized &amp; Decoupled REST Endpoints</h2>
+<p>To avoid monolithic responses and enable clean modular frontend designs, telemetry feeds are separated into distinct, targeted domain endpoints. All endpoints default to port <code>3000</code> (override via <code>PORT</code> environment variable) with standard JSON format and CORS enabled.</p>
+<h3>Driver Standings &amp; Leaderboards</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Method</th>
+<th style="text-align:left">Endpoint</th>
+<th style="text-align:left">Alias</th>
+<th style="text-align:left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/standings</code></td>
+<td style="text-align:left"><em>-</em></td>
+<td style="text-align:left">Dedicated driver classification sorted by live <code>Position</code>. Combines driver identity and timing intervals (<code>GapToLeader</code>, <code>BestLapTime</code>, <code>Sectors</code>, <code>Speeds</code>) without tyre stint arrays or meeting overhead.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/standings/:id</code></td>
+<td style="text-align:left"><em>-</em></td>
+<td style="text-align:left">Retrieves live timing and rank for a specific driver by their racing number (e.g., <code>/api/standings/1</code> or <code>/api/standings/44</code>).</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/leaderboard</code></td>
+<td style="text-align:left"><em>-</em></td>
+<td style="text-align:left">All-in-one comprehensive view combining driver metadata, live gaps, tyre stints, current lap count, and session meeting data into a single unified response.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/leaderboard/:id</code></td>
+<td style="text-align:left"><em>-</em></td>
+<td style="text-align:left">Comprehensive unified telemetry package for an individual driver.</td>
+</tr>
+</tbody>
+</table>
+<h3>Tyre Strategies &amp; Stint Chronology</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Method</th>
+<th style="text-align:left">Endpoint</th>
+<th style="text-align:left">Alias</th>
+<th style="text-align:left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/tyres</code></td>
+<td style="text-align:left"><code>/api/stints</code></td>
+<td style="text-align:left">Decoupled tyre strategy feed. Exposes compounds (<code>SOFT</code>, <code>MEDIUM</code>, <code>HARD</code>, <code>INTERMEDIATE</code>, <code>WET</code>), total lap wear per set, grid vs current line positions, enriched with driver acronyms and team hex colors.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/tyres/:id</code></td>
+<td style="text-align:left"><code>/api/stints/:id</code></td>
+<td style="text-align:left">Detailed stint chronology and active compound allocation for a specific driver.</td>
+</tr>
+</tbody>
+</table>
+<h3>Driver Directory &amp; Meeting Metadata</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Method</th>
+<th style="text-align:left">Endpoint</th>
+<th style="text-align:left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/drivers</code></td>
+<td style="text-align:left">Official meeting driver roster (<code>DriverList</code>), providing full names, broadcasting acronyms (<code>Tla</code>), team names, hex RGB team colors, country codes, and headshot references.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/drivers/:id</code></td>
+<td style="text-align:left">Specific team and personal metadata for a designated racing number.</td>
+</tr>
+</tbody>
+</table>
+<h3>Track Status, Weather &amp; Race Control</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Method</th>
+<th style="text-align:left">Endpoint</th>
+<th style="text-align:left">Alias</th>
+<th style="text-align:left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/session</code></td>
+<td style="text-align:left"><em>-</em></td>
+<td style="text-align:left">Current meeting identifier, official session name, session type (<code>Practice</code>, <code>Qualifying</code>, <code>Race</code>, <code>Sprint</code>), and lifecycle status.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/lap-count</code></td>
+<td style="text-align:left"><code>/api/laps</code></td>
+<td style="text-align:left">Live lap counter and scheduled total meeting laps (<code>{ &quot;CurrentLap&quot;: 24, &quot;TotalLaps&quot;: 57 }</code>).</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/weather</code></td>
+<td style="text-align:left"><em>-</em></td>
+<td style="text-align:left">Real-time meteorological telemetry: Air temperature, track surface temperature, relative humidity, wind speed/direction, and rain detection sensors.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/race-control</code></td>
+<td style="text-align:left"><code>/api/flags</code></td>
+<td style="text-align:left">Official FIA Race Control broadcasts: Track flag statuses (<code>GREEN</code>, <code>YELLOW</code>, <code>RED</code>), safety car deployments (<code>SC</code>, <code>VSC</code>), DRS enablement, and penalty warnings.</td>
+</tr>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/radio</code></td>
+<td style="text-align:left"><code>/api/team-radio</code></td>
+<td style="text-align:left">Recent team radio broadcast audio capture notifications, enriched with driver and team identity.</td>
+</tr>
+</tbody>
+</table>
+<h3>Server Health Diagnostics</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Method</th>
+<th style="text-align:left">Endpoint</th>
+<th style="text-align:left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><strong>GET</strong></td>
+<td style="text-align:left"><code>/api/status</code></td>
+<td style="text-align:left">Real-time diagnostics detailing WebSocket connectivity state (<code>CONNECTED</code> / <code>DISCONNECTED</code>), server process uptime in seconds, and timestamp of the last received SignalR transmission.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2>Session Schema Variations (Practice vs Race)</h2>
+<p>Because F1 SignalR adjusts its broadcast payload according to session discipline, the schema-agnostic deep merge natively reflects these variations across the API:</p>
+<h3>Race &amp; Sprint Sessions</h3>
+<p>Focus is placed on track positioning, intervals, and pit lane activity:</p>
+<ul>
+<li><strong><code>Position</code></strong>: Live numeric racing position used for automatic leaderboard ranking.</li>
+<li><strong><code>GapToLeader</code></strong>: Object detailing gap to P1 (e.g., <code>{&quot;Value&quot;: &quot;+4.128&quot;, &quot;Catching&quot;: false}</code> or <code>{&quot;Value&quot;: &quot;LEADER&quot;}</code>).</li>
+<li><strong><code>IntervalToPositionAhead</code></strong>: Distance interval to the immediate preceding driver.</li>
+<li><strong><code>InPit</code></strong> / <strong><code>PitOut</code></strong>: Live boolean indicators of pit lane transit.</li>
+<li><strong><code>NumberOfPitStops</code></strong>: Official count of completed box stops.</li>
+<li><strong><code>Retired</code></strong> / <strong><code>Stopped</code></strong>: DNF status flags, automatically shifting retired cars to the classification tail during dynamic sorting.</li>
+</ul>
+<h3>Practice, Qualifying &amp; Shootout Sessions</h3>
+<p>Focus shifts to timed lap speed, sector accuracy, and qualification drop zone thresholds:</p>
+<ul>
+<li><strong><code>BestLapTime</code></strong>: Current session personal benchmark (<code>{&quot;Value&quot;: &quot;1:28.914&quot;, &quot;PersonalFastest&quot;: true, &quot;OverallFastest&quot;: true}</code>).</li>
+<li><strong><code>BestLapTimes</code></strong>: Dictionary separating fastest laps by qualification segment (key <code>&quot;0&quot;</code> for Q1, <code>&quot;1&quot;</code> for Q2, <code>&quot;2&quot;</code> for Q3).</li>
+<li><strong><code>Stats</code></strong>: Qualifying gap statistics including time variance to session leader (<code>TimeDiffToFastest</code>) and immediate ranking predecessor (<code>TimeDifftoPositionAhead</code>).</li>
+<li><strong><code>Sectors</code></strong> / <strong><code>Speeds</code></strong>: Sector performance blocks and speed trap recordings at the Finish Line (<code>FL</code>), maximum Speed Trap (<code>ST</code>), and intermediate sectors (<code>I1</code>, <code>I2</code>).</li>
+</ul>
+<hr>
+<h2>Installation &amp; Server Startup</h2>
+<h3>Prerequisites</h3>
+<p>Requires Node.js (v18 or newer recommended for native <code>fetch</code> support during HTTP SignalR negotiation).</p>
+<pre class="prettyprint source lang-bash"><code># Navigate to the API workspace
+cd f1-livetiming-api
+
+# Install dependencies (ws, express, cors, nodemon)
+npm install
+</code></pre>
+<h3>Running the Server</h3>
+<pre class="prettyprint source lang-bash"><code># Standard production execution
+npm start
+
+# Development mode with automatic live reloading on file changes
+npm run dev
+</code></pre>
+<p>Upon initialization, the server will display its routing manifest and initiate F1 SignalR Core connection sequences:</p>
+<pre class="prettyprint source lang-text"><code>[Server] Initialising F1LiveClient and connecting to F1 SignalR Core...
+[F1Client] Pre-negotiating with F1 SignalR...
+[F1Client] Connecting to F1 SignalR Core WebSocket...
+[F1Client] Handshake complete. Subscribing to channels...
+
+====================================================================
+  F1 Live Timing REST API Running
+  Port: http://localhost:3000
+  Available Endpoints:
+    - GET http://localhost:3000/api/status
+    - GET http://localhost:3000/api/standings
+    - GET http://localhost:3000/api/leaderboard
+    - GET http://localhost:3000/api/tyres         (alias: /api/stints)
+    - GET http://localhost:3000/api/drivers
+    - GET http://localhost:3000/api/session
+    - GET http://localhost:3000/api/lap-count     (alias: /api/laps)
+    - GET http://localhost:3000/api/weather
+    - GET http://localhost:3000/api/race-control  (alias: /api/flags)
+    - GET http://localhost:3000/api/radio         (alias: /api/team-radio)
+====================================================================
+</code></pre>
+<hr>
+<h2>Quick Usage Examples (cURL &amp; JSON)</h2>
+<h3>1. Fetch Dedicated Driver Standings (<code>/api/standings</code>)</h3>
+<p>Returns clean driver classification sorted by live position, stripped of heavy tyre stint histories.</p>
+<pre class="prettyprint source lang-bash"><code>curl http://localhost:3000/api/standings
+</code></pre>
+<p><strong>Example JSON Response:</strong></p>
+<pre class="prettyprint source lang-json"><code>{
+  &quot;Leaderboard&quot;: [&quot;1&quot;, &quot;16&quot;, &quot;44&quot;],
+  &quot;Lines&quot;: {
+    &quot;1&quot;: {
+      &quot;RacingNumber&quot;: &quot;1&quot;,
+      &quot;Position&quot;: &quot;1&quot;,
+      &quot;BroadcastName&quot;: &quot;M VERSTAPPEN&quot;,
+      &quot;FullName&quot;: &quot;Max VERSTAPPEN&quot;,
+      &quot;Tla&quot;: &quot;VER&quot;,
+      &quot;TeamName&quot;: &quot;RED BULL RACING&quot;,
+      &quot;TeamColour&quot;: &quot;3671C6&quot;,
+      &quot;GapToLeader&quot;: {
+        &quot;Value&quot;: &quot;LEADER&quot;
+      },
+      &quot;BestLapTime&quot;: {
+        &quot;Value&quot;: &quot;1:32.410&quot;,
+        &quot;PersonalFastest&quot;: true,
+        &quot;OverallFastest&quot;: true
+      },
+      &quot;InPit&quot;: false,
+      &quot;NumberOfPitStops&quot;: 1,
+      &quot;Sectors&quot;: {
+        &quot;0&quot;: { &quot;Value&quot;: &quot;28.912&quot; },
+        &quot;1&quot;: { &quot;Value&quot;: &quot;39.105&quot; },
+        &quot;2&quot;: { &quot;Value&quot;: &quot;24.393&quot; }
+      }
+    },
+    &quot;16&quot;: {
+      &quot;RacingNumber&quot;: &quot;16&quot;,
+      &quot;Position&quot;: &quot;2&quot;,
+      &quot;BroadcastName&quot;: &quot;C LECLERC&quot;,
+      &quot;Tla&quot;: &quot;LEC&quot;,
+      &quot;TeamName&quot;: &quot;FERRARI&quot;,
+      &quot;TeamColour&quot;: &quot;E8002D&quot;,
+      &quot;GapToLeader&quot;: {
+        &quot;Value&quot;: &quot;+1.842&quot;,
+        &quot;Catching&quot;: false
+      },
+      &quot;InPit&quot;: false,
+      &quot;NumberOfPitStops&quot;: 1
+    }
+  }
+}
+</code></pre>
+<hr>
+<h3>2. Fetch Tyre Strategies &amp; Stints (<code>/api/tyres</code> or <code>/api/stints</code>)</h3>
+<p>Ideal for strategic dashboards tracking tyre degradation and compound allocations.</p>
+<pre class="prettyprint source lang-bash"><code>curl http://localhost:3000/api/tyres
+</code></pre>
+<p><strong>Example JSON Response:</strong></p>
+<pre class="prettyprint source lang-json"><code>{
+  &quot;Leaderboard&quot;: [&quot;1&quot;, &quot;16&quot;, &quot;44&quot;],
+  &quot;Lines&quot;: {
+    &quot;1&quot;: {
+      &quot;RacingNumber&quot;: &quot;1&quot;,
+      &quot;BroadcastName&quot;: &quot;M VERSTAPPEN&quot;,
+      &quot;Tla&quot;: &quot;VER&quot;,
+      &quot;TeamColour&quot;: &quot;3671C6&quot;,
+      &quot;GridPos&quot;: &quot;1&quot;,
+      &quot;Position&quot;: &quot;1&quot;,
+      &quot;Stints&quot;: [
+        {
+          &quot;Compound&quot;: &quot;SOFT&quot;,
+          &quot;TotalLaps&quot;: 16,
+          &quot;New&quot;: true
+        },
+        {
+          &quot;Compound&quot;: &quot;HARD&quot;,
+          &quot;TotalLaps&quot;: 8,
+          &quot;New&quot;: true
+        }
+      ]
+    }
+  }
+}
+</code></pre>
+<hr>
+<h3>3. Fetch Real-Time Meteorological Telemetry (<code>/api/weather</code>)</h3>
+<p>Retrieves atmospheric sensors directly from trackside F1 instrumentation.</p>
+<pre class="prettyprint source lang-bash"><code>curl http://localhost:3000/api/weather
+</code></pre>
+<p><strong>Example JSON Response:</strong></p>
+<pre class="prettyprint source lang-json"><code>{
+  &quot;Weather&quot;: {
+    &quot;AirTemp&quot;: &quot;28.4&quot;,
+    &quot;Humidity&quot;: &quot;52&quot;,
+    &quot;Pressure&quot;: &quot;1012.8&quot;,
+    &quot;Rainfall&quot;: &quot;0&quot;,
+    &quot;TrackTemp&quot;: &quot;41.9&quot;,
+    &quot;WindDirection&quot;: &quot;165&quot;,
+    &quot;WindSpeed&quot;: &quot;2.8&quot;
+  }
+}
+</code></pre>
+<hr>
+<h3>4. Monitor Server &amp; WebSocket Health (<code>/api/status</code>)</h3>
+<p>Used by uptime monitors or UI polling guards to verify active live timing stream health.</p>
+<pre class="prettyprint source lang-bash"><code>curl http://localhost:3000/api/status
+</code></pre>
+<p><strong>Example JSON Response:</strong></p>
+<pre class="prettyprint source lang-json"><code>{
+  &quot;service&quot;: &quot;f1-livetiming-api&quot;,
+  &quot;status&quot;: &quot;CONNECTED&quot;,
+  &quot;isConnected&quot;: true,
+  &quot;lastMessageAt&quot;: &quot;2026-07-28T09:42:15.824Z&quot;,
+  &quot;uptimeSeconds&quot;: 3840,
+  &quot;timestamp&quot;: &quot;2026-07-28T09:42:16.000Z&quot;
+}
+</code></pre>
+<hr>
+<h2>Source Directory Overview</h2>
+<pre class="prettyprint source lang-text"><code>f1-livetiming-api/
+│
+├── package.json                   # Express, CORS, and WebSocket dependencies
+├── README.md                      # Architecture guide and endpoint reference (English)
+└── src/
+    ├── server.js                  # Application root, middleware, and router mounts
+    ├── f1-client.js               # SignalR Core WebSocket engine & background delta subscriber
+    ├── routes/
+    │   ├── standings.js           # /api/standings router (classification table)
+    │   ├── tyres.js               # /api/tyres & /api/stints router (compound strategy)
+    │   ├── drivers.js             # /api/drivers router (DriverList official directory)
+    │   ├── session.js             # /api/session, /lap-count, /weather, /race-control, & /radio routers
+    │   └── leaderboard.js         # /api/leaderboard all-in-one consolidated telemetry router
+    ├── services/
+    │   └── leaderboard-service.js # Domain data extraction, deep merging & dynamic position sorting
+    └── utils/
+        └── merge.js               # SignalR delta recursive deep-merge engine
+</code></pre></article>
+    </section>
+
+
+
+
+
+
+
+
+
+<section>
+
+<header>
+    
+        <h2>routes/drivers.js</h2>
+        
+    
+</header>
+
+<article>
+    <div class="container-overview">
+    
+        
+            <div class="description"><p>Express routes for querying the official Formula 1 DriverList directory and metadata.</p></div>
+        
+
+        
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+    
+
+    
+
+    
+
+    
+        <p class="tag-source">
+            <a href="routes_drivers.js.html" class="button">View Source</a>
+            <span>
+                <a href="routes_drivers.js.html">routes/drivers.js</a>, <a href="routes_drivers.js.html#line1">line 1</a>
+            </span>
+        </p>
+    
+</dl>
+
+
+        
+    
+    </div>
+    
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</article>
+
+</section>
+
+
+
+
+
+
+
+<section>
+
+<header>
+    
+        <h2>routes/leaderboard.js</h2>
+        
+    
+</header>
+
+<article>
+    <div class="container-overview">
+    
+        
+            <div class="description"><p>Express routes for retrieving live F1 driver standings and classification.
+Returns exact SignalR Core PascalCase properties without renaming.</p></div>
+        
+
+        
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+    
+
+    
+
+    
+
+    
+        <p class="tag-source">
+            <a href="routes_leaderboard.js.html" class="button">View Source</a>
+            <span>
+                <a href="routes_leaderboard.js.html">routes/leaderboard.js</a>, <a href="routes_leaderboard.js.html#line1">line 1</a>
+            </span>
+        </p>
+    
+</dl>
+
+
+        
+    
+    </div>
+    
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</article>
+
+</section>
+
+
+
+
+
+
+
+<section>
+
+<header>
+    
+        <h2>routes/session.js</h2>
+        
+    
+</header>
+
+<article>
+    <div class="container-overview">
+    
+        
+            <div class="description"><p>Express routes exposing specialized session state, meteorological telemetry, lap progress,
+race control messages, and team radio transmissions.</p></div>
+        
+
+        
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+    
+
+    
+
+    
+
+    
+        <p class="tag-source">
+            <a href="routes_session.js.html" class="button">View Source</a>
+            <span>
+                <a href="routes_session.js.html">routes/session.js</a>, <a href="routes_session.js.html#line1">line 1</a>
+            </span>
+        </p>
+    
+</dl>
+
+
+        
+    
+    </div>
+    
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</article>
+
+</section>
+
+
+
+
+
+
+
+<section>
+
+<header>
+    
+        <h2>routes/standings.js</h2>
+        
+    
+</header>
+
+<article>
+    <div class="container-overview">
+    
+        
+            <div class="description"><p>Express routes for retrieving driver standings, positions, intervals, and lap timing metrics
+decoupled from tyre stint histories and root session metadata.</p></div>
+        
+
+        
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+    
+
+    
+
+    
+
+    
+        <p class="tag-source">
+            <a href="routes_standings.js.html" class="button">View Source</a>
+            <span>
+                <a href="routes_standings.js.html">routes/standings.js</a>, <a href="routes_standings.js.html#line1">line 1</a>
+            </span>
+        </p>
+    
+</dl>
+
+
+        
+    
+    </div>
+    
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</article>
+
+</section>
+
+
+
+
+
+
+
+<section>
+
+<header>
+    
+        <h2>routes/tyres.js</h2>
+        
+    
+</header>
+
+<article>
+    <div class="container-overview">
+    
+        
+            <div class="description"><p>Express routes for retrieving driver tyre compound allocations, stint histories, and strategy data.
+Enriched with driver TLA, TeamColour, and BroadcastName without altering native PascalCase SignalR properties.</p></div>
+        
+
+        
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+    
+
+    
+
+    
+
+    
+        <p class="tag-source">
+            <a href="routes_tyres.js.html" class="button">View Source</a>
+            <span>
+                <a href="routes_tyres.js.html">routes/tyres.js</a>, <a href="routes_tyres.js.html#line1">line 1</a>
+            </span>
+        </p>
+    
+</dl>
+
+
+        
+    
+    </div>
+    
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</article>
+
+</section>
+
+
+
+
+
+
+
+<section>
+
+<header>
+    
+        <h2>server.js</h2>
+        
+    
+</header>
+
+<article>
+    <div class="container-overview">
+    
+        
+            <div class="description"><p>Main entry point for the F1 Live Timing REST API Server.
+Connects to Formula 1 SignalR Core live telemetry and exposes modular REST endpoints.</p></div>
+        
+
+        
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+    
+
+    
+
+    
+
+    
+        <p class="tag-source">
+            <a href="server.js.html" class="button">View Source</a>
+            <span>
+                <a href="server.js.html">server.js</a>, <a href="server.js.html#line1">line 1</a>
+            </span>
+        </p>
+    
+</dl>
+
+
+        
+    
+    </div>
+    
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</article>
+
+</section>
+
+
+
+
+
+
+
+<section>
+
+<header>
+    
+        <h2>services/leaderboard-service.js</h2>
+        
+    
+</header>
+
+<article>
+    <div class="container-overview">
+    
+        
+            <div class="description"><p>Service responsible for assembling live telemetry, driver standings, tyre strategies,
+and session diagnostics directly from SignalR Core raw data streams without altering field names or case (PascalCase preserved).</p></div>
+        
+
+        
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+    
+
+    
+
+    
+
+    
+        <p class="tag-source">
+            <a href="services_leaderboard-service.js.html" class="button">View Source</a>
+            <span>
+                <a href="services_leaderboard-service.js.html">services/leaderboard-service.js</a>, <a href="services_leaderboard-service.js.html#line1">line 1</a>
+            </span>
+        </p>
+    
+</dl>
+
+
+        
+    
+    </div>
+    
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</article>
+
+</section>
+
+
+
+
+
+
+
+<section>
+
+<header>
+    
+        <h2>utils/merge.js</h2>
+        
+    
+</header>
+
+<article>
+    <div class="container-overview">
+    
+        
+            <div class="description"><p>Utility for deeply merging F1 SignalR Core delta payloads into an existing state tree.
+F1 SignalR uses a delta protocol where only changed fields in channels like TimingData or TimingAppData
+are sent in each message. Deep merging ensures that nested structures (such as Sectors, Speeds, or Stints)
+are cleanly updated without overwriting existing sibling fields.</p></div>
+        
+
+        
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+    
+
+    
+
+    
+
+    
+        <p class="tag-source">
+            <a href="utils_merge.js.html" class="button">View Source</a>
+            <span>
+                <a href="utils_merge.js.html">utils/merge.js</a>, <a href="utils_merge.js.html#line1">line 1</a>
+            </span>
+        </p>
+    
+</dl>
+
+
+        
+    
+    </div>
+    
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</article>
+
+</section>
+
+
+
+
+            </div>
+            
+            <footer class="footer">
+                <div class="content has-text-centered">
+                    <p>Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a></p>
+                    <p class="sidebar-created-by">
+                        <a href="https://github.com/SoftwareBrothers/better-docs" target="_blank">BetterDocs theme</a> provided with <i class="fas fa-heart"></i> by
+                        <a href="http://softwarebrothers.co" target="_blank">SoftwareBrothers - JavaScript Development Agency</a>
+                    </p>
+                </div>
+            </footer>
+            
+        </div>
+        <div id="side-nav" class="side-nav">
+        </div>
+    </div>
+<script src="scripts/app.min.js"></script>
+<script>PR.prettyPrint();</script>
+<script src="scripts/linenumber.js"> </script>
+
+
+</body>
+</html>

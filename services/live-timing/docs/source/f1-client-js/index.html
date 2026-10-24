@@ -1,0 +1,335 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="generator" content="clean-jsdoc-theme 5.1.0" /><title>f1-client.js</title><script>(function(){try{var d=document.documentElement;var t=localStorage.getItem('theme');if(t==='dark'){d.dataset.theme='dark'}else{d.dataset.theme='light'}var fs=localStorage.getItem('clean-font-size');if(fs==='sm'){d.style.fontSize='15px'}else if(fs==='lg'){d.style.fontSize='18px'}var ls=localStorage.getItem('clean-line-spacing');if(ls==='compact'){d.style.setProperty('--clean-line-height','1.4')}else if(ls==='relaxed'){d.style.setProperty('--clean-line-height','1.8')}}catch(_){}}());</script><link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;500;600;700&amp;family=Roboto:wght@400;500;600;700&amp;display=swap" /><link rel="stylesheet" href="/_assets/styles.ms4j5807-120b3fba.css" /></head><body><div class="flex min-h-screen flex-col bg-background text-(--clean-fg)"><header class="sticky top-0 z-30 border-b border-(--clean-border) bg-background"><div class="mx-auto flex h-16 w-full min-w-0 max-w-screen-2xl items-center gap-4 px-4"><a href="/" class="flex min-w-0 items-center pl-3 no-underline"><span class="truncate text-lg font-heading font-bold text-(--clean-fg)">Documentation</span></a><div class="ml-auto flex shrink-0 items-center gap-1"><div class="flex items-center gap-1"><div data-island="cmdk" data-island-id="i1"><button class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 text-muted-foreground hover:bg-accent hover:text-accent-foreground h-9 w-9" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Search" title="Search (Ctrl K)"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-search" aria-hidden="true"><path d="m21 21-4.34-4.34"></path><circle cx="11" cy="11" r="8"></circle></svg></button></div></div><div class="hidden items-center gap-1 md:flex"><div data-island="theme-toggle" data-island-id="i2"><button class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 text-muted-foreground hover:bg-accent hover:text-accent-foreground h-9 w-9" type="button" aria-label="Switch to dark theme" title="Toggle theme"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-sun" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path></svg></button></div><div data-island="settings" data-island-id="i3"><button class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 text-muted-foreground hover:bg-accent hover:text-accent-foreground h-9 w-9" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Settings" title="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></svg></button></div></div><div class="md:hidden"><div data-island="mobile-nav" data-island-id="i4"><button class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 text-muted-foreground hover:bg-accent hover:text-accent-foreground h-9 w-9" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Open navigation" title="Menu"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-panel-right" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M15 3v18"></path></svg></button></div></div></div></div></header><div class="mx-auto grid w-full max-w-screen-2xl flex-1 grid-cols-1 gap-6 px-4 py-6 md:grid-cols-[16rem_minmax(0,1fr)]"><aside class="hidden md:block"><div class="sticky overflow-y-auto [scrollbar-gutter:stable] pr-2 top-20 max-h-[calc(100vh-6rem)]"><div data-island="sidebar" data-island-id="i5"><nav aria-label="Documentation navigation" class="text-(--clean-fg)"><div class="mt-4 first:mt-0"><ul class="m-0 list-none p-0"><li class="my-0.5"><a href="/" class="group flex items-start gap-x-3 w-full px-3 py-1.5 text-left text-sm no-underline break-words hyphens-auto overflow-hidden rounded-xl outline-offset-[-1px] cursor-pointer text-[var(--clean-fg)] hover:bg-[var(--clean-bg-muted)]"><span class="min-w-0 wrap-break-words">Home</span></a></li></ul></div><div class="mt-4 first:mt-0"><button type="button" aria-expanded="true" class="mb-1 flex w-full items-center rounded-xl py-1.5 px-3 text-left text-sm font-bold text-(--clean-fg) cursor-pointer hover:bg-[var(--clean-bg-muted)]"><span class="min-w-0 wrap-break-words">Globals</span><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-right ml-auto shrink-0 transition-transform rotate-90" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg></button><ul class="m-0 list-none p-0"><li class="my-0.5"><a href="/global" class="group flex items-start gap-x-3 w-full px-3 py-1.5 text-left text-sm no-underline break-words hyphens-auto overflow-hidden rounded-xl outline-offset-[-1px] cursor-pointer text-[var(--clean-fg)] hover:bg-[var(--clean-bg-muted)]"><span class="min-w-0 wrap-break-words">Globals</span></a></li></ul></div><div class="mt-4 first:mt-0"><ul class="m-0 list-none p-0"><li class="my-0.5"><a href="/source" class="group flex items-start gap-x-3 w-full px-3 py-1.5 text-left text-sm no-underline break-words hyphens-auto overflow-hidden rounded-xl outline-offset-[-1px] cursor-pointer text-[var(--clean-fg)] hover:bg-[var(--clean-bg-muted)]"><span class="min-w-0 wrap-break-words">Source Files</span></a></li></ul></div></nav></div></div></aside><main class="min-w-0 px-4 md:px-8 lg:px-12"><div data-island="code-viewer" data-island-id="i0"><div class="my-4 overflow-hidden rounded-lg border border-(--clean-border) bg-(--clean-bg)"><div class="flex items-center justify-between border-b border-(--clean-border) bg-(--clean-bg-muted) px-3 py-2 text-sm"><span class="font-mono text-(--clean-fg)">f1-client.js</span><span class="text-xs text-(--clean-fg-muted)">javascript</span></div><div class="h-[calc(100vh-13rem)] min-h-[24rem]"><pre class="m-0 h-full overflow-auto whitespace-pre p-4 text-sm leading-relaxed text-(--clean-fg)"><code class="language-javascript">const WebSocket = require('ws');
+const fs = require('fs');
+const path = require('path');
+const { deepMerge } = require('./utils/merge');
+
+const F1_ORIGIN_URL = 'https://www.formula1.com';
+const F1_HTTP_URL = 'https://livetiming.formula1.com/signalrcore';
+const F1_WS_URL = 'wss://livetiming.formula1.com/signalrcore';
+
+const NEGOTIATE_VERSION = '1';
+const RECORD_SEP = '\x1e';
+const SUBSCRIBE_INVOCATION_ID = '0';
+
+const MSG_INVOCATION = 1;
+const MSG_COMPLETION = 3;
+
+const HANDSHAKE_MESSAGE = `{&quot;protocol&quot;:&quot;json&quot;,&quot;version&quot;:1}${RECORD_SEP}`;
+
+const SUBSCRIBE_CHANNELS = [
+    'TimingData',
+    'TimingDataF1',
+    'TimingAppData',
+    'DriverList',
+    'SessionInfo',
+    'WeatherData',
+    'RaceControlMessages',
+    'LapCount',
+    'TeamRadio'
+];
+
+class F1LiveClient {
+    constructor(broadcastCallback) {
+        this.broadcast = broadcastCallback || (() => {});
+        this.ws = null;
+        this.isConnected = false;
+        this.lastMessageAt = null;
+
+        // Global State Cache preserving exact SignalR Core PascalCase structure and fields
+        this.timingData = { Lines: {} };
+        this.driverList = {};
+        this.timingAppData = { Lines: {} };
+        this.weather = {};
+        this.session = {};
+        this.lapCount = {};
+        this.raceControl = [];
+        this.teamRadio = [];
+
+        this.watchdogTimer = null;
+    }
+
+    /**
+     * @description Initiates connection to F1 SignalR live timing endpoint.
+     * @returns {Promise&lt;void>} Resolves when initial connection sequence completes.
+     */
+    connect() {
+        return new Promise((resolve) => {
+            let isDone = false;
+            const finish = () => {
+                if (!isDone) {
+                    isDone = true;
+                    resolve();
+                }
+            };
+
+            const timeout = setTimeout(finish, 10000);
+            this._startConnection(finish, timeout);
+        });
+    }
+
+    /**
+     * @description Negotiates HTTP session and starts WebSocket connection.
+     * @param {Function} [onReady] - Callback invoked when connection sequence finishes.
+     * @param {NodeJS.Timeout} [timeout] - Safety timer for connection initialisation.
+     * @returns {Promise&lt;void>} Resolves when connection attempt concludes.
+     */
+    async _startConnection(onReady, timeout) {
+        try {
+            console.log('\n[F1Client] Pre-negotiating with F1 SignalR...');
+            const preNegResp = await fetch(`${F1_HTTP_URL}/negotiate`, {
+                method: 'OPTIONS',
+                headers: { 'User-Agent': 'BestHTTP', Origin: F1_ORIGIN_URL }
+            });
+            const rawCookie = preNegResp.headers.get('set-cookie') || '';
+            const awsMatch = rawCookie.match(/AWSALBCORS=([^;]+)/);
+            const awsAlbCors = awsMatch ? awsMatch[1] : '';
+
+            const negotiateHeaders = {
+                'User-Agent': 'BestHTTP',
+                Origin: F1_ORIGIN_URL,
+                'Content-Type': 'text/plain'
+            };
+            if (awsAlbCors) negotiateHeaders['Cookie'] = `AWSALBCORS=${awsAlbCors}`;
+
+            const negotiateResp = await fetch(`${F1_HTTP_URL}/negotiate?negotiateVersion=${NEGOTIATE_VERSION}`, {
+                method: 'POST',
+                headers: negotiateHeaders
+            });
+
+            if (!negotiateResp.ok) throw new Error(`Negotiate failed — HTTP ${negotiateResp.status}`);
+
+            const negotiateData = await negotiateResp.json();
+            const connectionToken = encodeURIComponent(negotiateData.connectionToken);
+
+            let wsUrl = `${F1_WS_URL}?id=${connectionToken}`;
+            const wsHeaders = {
+                'User-Agent': 'BestHTTP',
+                Origin: F1_ORIGIN_URL
+            };
+            if (awsAlbCors) wsHeaders['Cookie'] = `AWSALBCORS=${awsAlbCors}`;
+
+            console.log('[F1Client] Connecting to F1 SignalR Core WebSocket...');
+            this.ws = new WebSocket(wsUrl, { headers: wsHeaders });
+            this.setupListeners(onReady, timeout);
+        } catch (error) {
+            console.error('[F1Client] Connection error:', error);
+            if (timeout) clearTimeout(timeout);
+            if (onReady) onReady();
+            setTimeout(() => this.connect(), 5000);
+        }
+    }
+
+    /**
+     * @description Registers WebSocket event listeners for messages and state changes.
+     * @param {Function} [onReady] - Callback invoked when initial handshake completes.
+     * @param {NodeJS.Timeout} [timeout] - Safety timer for connection initialisation.
+     * @returns {void}
+     */
+    setupListeners(onReady, timeout) {
+        let isHandshakeComplete = false;
+
+        this.ws.on('open', () => {
+            console.log('[F1Client] WebSocket open — sending handshake...');
+            this.ws.send(HANDSHAKE_MESSAGE);
+        });
+
+        this.ws.on('message', (data) => {
+            this.lastMessageAt = new Date().toISOString();
+            if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+            this.watchdogTimer = setTimeout(() => {
+                if (this.isConnected) {
+                    console.error('[F1Client] Watchdog timeout: No data received for 20s. Forcing reconnect...');
+                    try {
+                        this.ws.terminate();
+                    } catch (e) {}
+                }
+            }, 20000);
+
+            try {
+                const raw = data.toString('utf-8');
+                for (const segment of raw.split(RECORD_SEP)) {
+                    if (segment.length === 0) continue;
+                    const frame = JSON.parse(segment);
+
+                    if (!isHandshakeComplete) {
+                        if (frame.error) {
+                            console.error('[F1Client] Handshake rejected:', frame.error);
+                            if (timeout) clearTimeout(timeout);
+                            if (onReady) onReady();
+                            this.ws.close();
+                            return;
+                        }
+                        isHandshakeComplete = true;
+                        this.isConnected = true;
+                        console.log('[F1Client] Handshake complete. Subscribing to channels...');
+                        if (timeout) clearTimeout(timeout);
+                        if (onReady) onReady();
+
+                        try {
+                            const logPath = path.join(__dirname, '../signalr_connections.log');
+                            const timestamp = new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' });
+                            fs.appendFileSync(
+                                logPath,
+                                `[${timestamp}] F1 SignalR connection successfully established.\n`
+                            );
+                        } catch (err) {
+                            console.error('[F1Client] Failed to write to connection log:', err.message);
+                        }
+
+                        this.sendSubscribe();
+                        return;
+                    }
+
+                    if (frame.type === MSG_COMPLETION &amp;&amp; frame.invocationId === SUBSCRIBE_INVOCATION_ID) {
+                        if (frame.result) {
+                            this.handleSnapshot(frame.result);
+                        }
+                    }
+
+                    if (frame.type === MSG_INVOCATION &amp;&amp; frame.target === 'feed') {
+                        const args = frame.arguments;
+                        if (args &amp;&amp; args.length >= 2) {
+                            const channel = args[0];
+                            const payload = args[1];
+                            this.routeData(channel, payload);
+                        }
+                    }
+                }
+            } catch (err) {
+                // Silent catch for partial frames or malformed segments
+            }
+        });
+
+        this.ws.on('close', () => {
+            this.isConnected = false;
+            if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+            console.log('[F1Client] Disconnected. Reconnecting in 5s...');
+            setTimeout(() => this.connect(), 5000);
+        });
+
+        this.ws.on('error', (err) => {
+            console.error('[F1Client] Error:', err);
+            if (timeout) clearTimeout(timeout);
+            if (onReady) onReady();
+        });
+    }
+
+    sendSubscribe() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        const msg = JSON.stringify({
+            type: MSG_INVOCATION,
+            invocationId: SUBSCRIBE_INVOCATION_ID,
+            target: 'Subscribe',
+            arguments: [SUBSCRIBE_CHANNELS]
+        });
+        this.ws.send(`${msg}${RECORD_SEP}`);
+    }
+
+    handleSnapshot(result) {
+        if (result.DriverList) this.routeData('DriverList', result.DriverList);
+        if (result.TimingAppData) this.routeData('TimingAppData', result.TimingAppData);
+        if (result.TimingData) this.routeData('TimingData', result.TimingData);
+        if (result.TimingDataF1) this.routeData('TimingDataF1', result.TimingDataF1);
+        if (result.SessionInfo) this.routeData('SessionInfo', result.SessionInfo);
+        if (result.WeatherData) this.routeData('WeatherData', result.WeatherData);
+        if (result.RaceControlMessages) this.routeData('RaceControlMessages', result.RaceControlMessages);
+        if (result.LapCount) this.routeData('LapCount', result.LapCount);
+        if (result.TeamRadio) this.routeData('TeamRadio', result.TeamRadio);
+    }
+
+    /**
+     * Routes incoming channel feeds or deltas into the state store using deep merge,
+     * preserving all SignalR Core PascalCase field names.
+     * @param {string} channel - SignalR channel name.
+     * @param {string|Object} dataStr - JSON string or object payload.
+     */
+    routeData(channel, dataStr) {
+        if (!dataStr) return;
+        const data = typeof dataStr === 'string' ? JSON.parse(dataStr) : dataStr;
+
+        switch (channel) {
+            case 'DriverList':
+                deepMerge(this.driverList, data);
+                this.broadcast({ type: 'DriverList', data: this.driverList });
+                break;
+            case 'TimingAppData':
+                deepMerge(this.timingAppData, data);
+                this.broadcast({ type: 'TimingAppData', data: this.timingAppData });
+                break;
+            case 'TimingData':
+            case 'TimingDataF1':
+                deepMerge(this.timingData, data);
+                this.broadcast({ type: channel, data: this.timingData });
+                break;
+            case 'SessionInfo':
+                deepMerge(this.session, data);
+                this.broadcast({ type: 'SessionInfo', data: this.session });
+                break;
+            case 'WeatherData':
+                deepMerge(this.weather, data);
+                this.broadcast({ type: 'WeatherData', data: this.weather });
+                break;
+            case 'LapCount':
+                deepMerge(this.lapCount, data);
+                this.broadcast({ type: 'LapCount', data: this.lapCount });
+                break;
+            case 'RaceControlMessages':
+                if (data.Messages) {
+                    const msgs = Array.isArray(data.Messages) ? data.Messages : Object.values(data.Messages);
+                    this.raceControl = [...this.raceControl, ...msgs].slice(-50);
+                    this.broadcast({ type: 'RaceControlMessages', data: this.raceControl });
+                }
+                break;
+            case 'TeamRadio':
+                if (data.Captures) {
+                    const caps = Array.isArray(data.Captures) ? data.Captures : Object.values(data.Captures);
+                    this.teamRadio = [...this.teamRadio, ...caps].slice(-30);
+                    this.broadcast({ type: 'TeamRadio', data: this.teamRadio });
+                }
+                break;
+        }
+    }
+
+    // Getters for REST API integration
+    getTimingData() {
+        return this.timingData;
+    }
+
+    getDriverList() {
+        return this.driverList;
+    }
+
+    getTimingAppData() {
+        return this.timingAppData;
+    }
+
+    getSessionInfo() {
+        return this.session;
+    }
+
+    getLapCount() {
+        return this.lapCount;
+    }
+
+    getWeatherData() {
+        return this.weather;
+    }
+
+    getRaceControlMessages() {
+        return this.raceControl;
+    }
+
+    getTeamRadio() {
+        return this.teamRadio;
+    }
+
+    getConnectionStatus() {
+        return {
+            isConnected: this.isConnected,
+            lastMessageAt: this.lastMessageAt
+        };
+    }
+}
+
+module.exports = F1LiveClient;
+</code></pre></div></div></div></main></div><footer class="border-t border-(--clean-border) bg-background py-6 text-sm text-muted-foreground"><div class="mx-auto flex w-full max-w-screen-2xl flex-col items-start justify-between gap-2 px-4 md:flex-row md:items-center"><div class="flex items-center gap-1.5"><span>Documentation</span><span>© 2026</span></div></div></footer></div><script type="application/json" data-island-props>{"i0":{"language":"javascript","filename":"f1-client.js"},"i1":{"basePath":"/","searchIndexUrl":"/_assets/search-index.ms4j5807-120b3fba.json"},"i2":{},"i3":{},"i4":{"nav":[{"label":"Home","slug":"","order":-1},{"label":"Globals","slug":"global","group":"Globals","order":8},{"label":"Source Files","slug":"source","order":11}],"currentSlug":"source/f1-client-js","basePath":"/","collapsibleGroups":["Globals"]},"i5":{"nav":[{"label":"Home","slug":"","order":-1},{"label":"Globals","slug":"global","group":"Globals","order":8},{"label":"Source Files","slug":"source","order":11}],"currentSlug":"source/f1-client-js","basePath":"/","collapsibleGroups":["Globals"]}}</script><script type="module">(function(){var map={"theme-toggle":"/_islands/theme-toggle-MFKEIGBZ.js","settings":"/_islands/settings-TVWSQT6I.js","code-viewer":"/_islands/code-viewer-S3DIZRC3.js","embed":"/_islands/embed-24QZS4CF.js","playground":"/_islands/playground-N5NFYMP6.js","tabs":"/_islands/tabs-NRSQKCSU.js","sidebar":"/_islands/sidebar-AKX3KCQS.js","mobile-nav":"/_islands/mobile-nav-ZFIZP3CE.js","toc":"/_islands/toc-W36SMPYU.js","toc-mobile":"/_islands/toc-mobile-X6HBYLUF.js","cmdk":"/_islands/cmdk-SWB64M4V.js","code-tabs":"/_islands/code-tabs-WLBAIWNH.js","copy-btn":"/_islands/copy-btn-5O25GXTU.js","copy-page":"/_islands/copy-page-OPKTMKVF.js"};var seen=new Set();document.querySelectorAll('[data-island]').forEach(function(el){seen.add(el.getAttribute('data-island'));});seen.forEach(function(name){var src=map[name];if(src){import(src);}});})();</script><script>(function(){function flash(h){var b=h.querySelector('[data-heading-anchor]');if(!b)return;b.setAttribute('data-copied','');window.setTimeout(function(){b.removeAttribute('data-copied');},3000);}function onClick(e){var t=e.target;if(!t||!t.closest)return;if(t.closest('a'))return;var h=t.closest('h1[id],h2[id],h3[id],h4[id],h5[id],h6[id]');if(!h)return;var id=h.id;if(!id)return;var iconOnly=!!t.closest('[data-heading-anchor]');if(!iconOnly){if(location.hash.slice(1)===id){h.scrollIntoView();}else{location.hash=id;}}try{var url=location.origin+location.pathname+location.search+'#'+id;if(navigator.clipboard){navigator.clipboard.writeText(url).then(function(){flash(h);}).catch(function(){});}}catch(_){}}document.addEventListener('click',onClick);}());</script><script>(function(){var IDLE=700;var timers=new WeakMap();function onScroll(e){var el=e.target;if(el===document||el===window)el=document.documentElement;if(!el||!el.classList)return;el.classList.add('clean-scrolling');var prev=timers.get(el);if(prev)window.clearTimeout(prev);timers.set(el,window.setTimeout(function(){el.classList.remove('clean-scrolling');},IDLE));}document.addEventListener('scroll',onScroll,true);}());</script></body></html>

@@ -1,0 +1,41 @@
+# Python / Django
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+backend/db.sqlite3
+backend/db.sqlite3-journal
+backend/media/
+
+# Node
+node_modules/
+frontend/dist/
+services/live-timing/node_modules/
+
+# Proveedor live vendorizado (services/live-timing es un clon de
+# julesr0y/f1-livetiming-api). Se versiona como codigo normal, sin su .git,
+# para conservar los parches locales de bind/CORS y la ruta car-data.
+# El clon original queda renombrado como .git-upstream-backup/ para poder
+# sincronizar con el upstream; no se versiona.
+services/live-timing/.git/
+services/live-timing/.git-upstream-backup/
+
+# Entorno
+.env
+.env.local
+*.env
+!.env.example
+
+# Ejecucion (PIDs y logs)
+.run/
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

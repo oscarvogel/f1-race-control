@@ -1,0 +1,226 @@
+
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title> server.js</title>
+
+  <script src="https://cdn.jsdelivr.net/gh/google/code-prettify@master/loader/run_prettify.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="./build/entry.js"></script>
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+  <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+  <![endif]-->
+  <link href="https://fonts.googleapis.com/css?family=Roboto:100,400,700|Inconsolata,700" rel="stylesheet">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.6.3/css/all.css" integrity="sha384-UHRtZLI+pbxtHCWp1t77Bi1L4ZtiqrqD80Kn4Z8NTSRyMA2Fd33n5dQ8lWUE00s/" crossorigin="anonymous">
+  <link type="text/css" rel="stylesheet" href="https://jmblog.github.io/color-themes-for-google-code-prettify/themes/tomorrow-night.min.css">
+  <link type="text/css" rel="stylesheet" href="styles/app.min.css">
+  <link type="text/css" rel="stylesheet" href="styles/iframe.css">
+  <link type="text/css" rel="stylesheet" href="">
+  <script async defer src="https://buttons.github.io/buttons.js"></script>
+
+  
+</head>
+
+
+
+<body class="layout small-header">
+    <div id="stickyNavbarOverlay"></div>
+    
+
+<div class="top-nav">
+    <div class="inner">
+        <a id="hamburger" role="button" class="navbar-burger" aria-label="menu" aria-expanded="false">
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+        </a>
+        <div class="logo">
+            
+             
+                <a href="index.html">
+                    <h1 class="navbar-item">F1 Live Timing API</h1>
+                </a>
+            
+        </div>
+        <div class="menu">
+            
+            <div class="navigation">
+                <a
+                    href="index.html"
+                    class="link"
+                >
+                    Documentation
+                </a>
+                
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+    <div id="main">
+        <div
+            class="sidebar "
+            id="sidebarNav"
+        >
+            
+            <nav>
+                
+                    <h2><a href="index.html">Documentation</a></h2><div class="category"><h3>Global</h3><ul><li><a href="global.html#createDriversRouter">createDriversRouter</a></li><li><a href="global.html#createLeaderboardRouter">createLeaderboardRouter</a></li><li><a href="global.html#createSessionRouter">createSessionRouter</a></li><li><a href="global.html#createStandingsRouter">createStandingsRouter</a></li><li><a href="global.html#createTyresRouter">createTyresRouter</a></li><li><a href="global.html#deepMerge">deepMerge</a></li><li><a href="global.html#getDriverLeaderboard">getDriverLeaderboard</a></li><li><a href="global.html#getDriverStandings">getDriverStandings</a></li><li><a href="global.html#getDriverTyres">getDriverTyres</a></li><li><a href="global.html#getDriversDirectory">getDriversDirectory</a></li><li><a href="global.html#getEnrichedTeamRadio">getEnrichedTeamRadio</a></li><li><a href="global.html#getLiveLeaderboard">getLiveLeaderboard</a></li><li><a href="global.html#getLiveStandings">getLiveStandings</a></li><li><a href="global.html#getLiveTyres">getLiveTyres</a></li><li><a href="global.html#isPlainObject">isPlainObject</a></li><li><a href="global.html#sortRacingNumbers">sortRacingNumbers</a></li></ul></div>
+                
+            </nav>
+        </div>
+        <div class="core" id="main-content-wrapper">
+            <div class="content">
+                <header class="page-title">
+                    <p>Source</p>
+                    <h1>server.js</h1>
+                </header>
+                
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**
+ * @file server.js
+ * @description Main entry point for the F1 Live Timing REST API Server.
+ * Connects to Formula 1 SignalR Core live telemetry and exposes modular REST endpoints.
+ */
+
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const F1LiveClient = require('./f1-client');
+const { createLeaderboardRouter } = require('./routes/leaderboard');
+const { createStandingsRouter } = require('./routes/standings');
+const { createTyresRouter } = require('./routes/tyres');
+const { createDriversRouter } = require('./routes/drivers');
+const { createSessionRouter } = require('./routes/session');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Enable JSON body parsing and CORS for downstream client/dashboard access
+app.use(cors());
+app.use(express.json());
+
+
+
+// Instantiate and initiate the F1 SignalR live timing connection
+console.log('[Server] Initialising F1LiveClient and connecting to F1 SignalR Core...');
+const f1Client = new F1LiveClient();
+f1Client.connect().then(() => {
+    console.log('[Server] F1 SignalR connection negotiation initiated.');
+});
+
+// Mount specialized REST API routers
+app.use('/api/leaderboard', createLeaderboardRouter(f1Client));
+app.use('/api/standings', createStandingsRouter(f1Client));
+
+const tyresRouter = createTyresRouter(f1Client);
+app.use('/api/tyres', tyresRouter);
+app.use('/api/stints', tyresRouter);
+
+app.use('/api/drivers', createDriversRouter(f1Client));
+
+// Mount session, weather, lap-count, race-control, and radio routes under /api
+app.use('/api', createSessionRouter(f1Client));
+
+/**
+ * GET /api/status
+ * Returns WebSocket connection state, uptime, and last received message timestamp.
+ */
+app.get('/api/status', (req, res) => {
+    const status = f1Client.getConnectionStatus();
+    res.status(200).json({
+        service: 'f1-livetiming-api',
+        status: status.isConnected ? 'CONNECTED' : 'DISCONNECTED',
+        isConnected: status.isConnected,
+        lastMessageAt: status.lastMessageAt,
+        uptimeSeconds: Math.floor(process.uptime()),
+        timestamp: new Date().toISOString()
+    });
+});
+
+/**
+ * Fallback handler for undefined API endpoints.
+ */
+app.use((req, res) => {
+    res.status(404).json({
+        error: 'Endpoint not found.',
+        documentationUrl: '/docs',
+        availableRoutes: [
+            '/api/status',
+            '/api/standings',
+            '/api/leaderboard',
+            '/api/tyres',
+            '/api/drivers',
+            '/api/session',
+            '/api/lap-count',
+            '/api/weather',
+            '/api/race-control',
+            '/api/radio',
+            '/docs'
+        ]
+    });
+});
+
+// Start listening for HTTP requests
+const server = app.listen(PORT, () => {
+    console.log(`\n====================================================================`);
+    console.log(`  F1 Live Timing REST API Running`);
+    console.log(`  Port: http://localhost:${PORT}`);
+    console.log(`  Documentation Website: http://localhost:${PORT}/docs`);
+    console.log(`  Available Endpoints:`);
+    console.log(`    - GET http://localhost:${PORT}/api/status`);
+    console.log(`    - GET http://localhost:${PORT}/api/standings`);
+    console.log(`    - GET http://localhost:${PORT}/api/leaderboard`);
+    console.log(`    - GET http://localhost:${PORT}/api/tyres         (alias: /api/stints)`);
+    console.log(`    - GET http://localhost:${PORT}/api/drivers`);
+    console.log(`    - GET http://localhost:${PORT}/api/session`);
+    console.log(`    - GET http://localhost:${PORT}/api/lap-count     (alias: /api/laps)`);
+    console.log(`    - GET http://localhost:${PORT}/api/weather`);
+    console.log(`    - GET http://localhost:${PORT}/api/race-control  (alias: /api/flags)`);
+    console.log(`    - GET http://localhost:${PORT}/api/radio         (alias: /api/team-radio)`);
+    console.log(`====================================================================\n`);
+});
+
+module.exports = { app, server, f1Client };
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+            </div>
+            
+            <footer class="footer">
+                <div class="content has-text-centered">
+                    <p>Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a></p>
+                    <p class="sidebar-created-by">
+                        <a href="https://github.com/SoftwareBrothers/better-docs" target="_blank">BetterDocs theme</a> provided with <i class="fas fa-heart"></i> by
+                        <a href="http://softwarebrothers.co" target="_blank">SoftwareBrothers - JavaScript Development Agency</a>
+                    </p>
+                </div>
+            </footer>
+            
+        </div>
+        <div id="side-nav" class="side-nav">
+        </div>
+    </div>
+<script src="scripts/app.min.js"></script>
+<script>PR.prettyPrint();</script>
+<script src="scripts/linenumber.js"> </script>
+
+
+</body>
+</html>

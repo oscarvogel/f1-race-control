@@ -1,0 +1,36 @@
+{
+  "name": "f1-livetiming-api",
+  "version": "2026.0.0",
+  "description": "Host your own REST API to get F1 live data and standings during sessions directly from F1 SignalR Core.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "format": "prettier --write \"src/**/*.js\"",
+    "docs": "jsdoc -c jsdoc.json",
+    "docs:serve": "npx --yes serve docs -p 4000"
+  },
+  "keywords": [
+    "f1",
+    "formula-1",
+    "live-timing",
+    "signalr",
+    "api",
+    "rest",
+    "telemetry"
+  ],
+  "author": "ROY Jules (julesr0y)",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "better-docs": "^2.7.3",
+    "docdash": "^2.0.2",
+    "jsdoc": "^4.0.5",
+    "nodemon": "^3.1.9",
+    "prettier": "^3.9.6"
+  }
+}

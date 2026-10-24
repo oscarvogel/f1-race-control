@@ -1,0 +1,7 @@
+# Normalizacion a LF en todo el repositorio.
+# Los scripts de scripts/ se ejecutan en WSL Ubuntu: un CRLF los rompe.
+# La deteccion de binarios la hace git automaticamente (text=auto).
+* text=auto eol=lf
+
+# Los scripts de shell deben ser LF siempre, sin excepcion.
+*.sh text eol=lf

@@ -1,0 +1,25 @@
+{
+  "plugins": ["plugins/markdown", "node_modules/better-docs/category"],
+  "source": {
+    "include": ["src", "README.md"],
+    "includePattern": ".js$",
+    "excludePattern": "(node_modules/|docs)"
+  },
+  "opts": {
+    "destination": "docs/",
+    "recurse": true,
+    "template": "node_modules/better-docs"
+  },
+  "templates": {
+    "better-docs": {
+      "name": "F1 Live Timing API",
+      "navigation": [
+        {
+          "label": "GitHub Repo",
+          "href": "https://github.com/julesr0y/f1-livetiming-api"
+        }
+      ],
+      "theme": "dark"
+    }
+  }
+}

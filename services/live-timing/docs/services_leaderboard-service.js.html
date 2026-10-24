@@ -1,0 +1,377 @@
+
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title> services/leaderboard-service.js</title>
+
+  <script src="https://cdn.jsdelivr.net/gh/google/code-prettify@master/loader/run_prettify.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="./build/entry.js"></script>
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+  <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+  <![endif]-->
+  <link href="https://fonts.googleapis.com/css?family=Roboto:100,400,700|Inconsolata,700" rel="stylesheet">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.6.3/css/all.css" integrity="sha384-UHRtZLI+pbxtHCWp1t77Bi1L4ZtiqrqD80Kn4Z8NTSRyMA2Fd33n5dQ8lWUE00s/" crossorigin="anonymous">
+  <link type="text/css" rel="stylesheet" href="https://jmblog.github.io/color-themes-for-google-code-prettify/themes/tomorrow-night.min.css">
+  <link type="text/css" rel="stylesheet" href="styles/app.min.css">
+  <link type="text/css" rel="stylesheet" href="styles/iframe.css">
+  <link type="text/css" rel="stylesheet" href="">
+  <script async defer src="https://buttons.github.io/buttons.js"></script>
+
+  
+</head>
+
+
+
+<body class="layout small-header">
+    <div id="stickyNavbarOverlay"></div>
+    
+
+<div class="top-nav">
+    <div class="inner">
+        <a id="hamburger" role="button" class="navbar-burger" aria-label="menu" aria-expanded="false">
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+        </a>
+        <div class="logo">
+            
+             
+                <a href="index.html">
+                    <h1 class="navbar-item">F1 Live Timing API</h1>
+                </a>
+            
+        </div>
+        <div class="menu">
+            
+            <div class="navigation">
+                <a
+                    href="index.html"
+                    class="link"
+                >
+                    Documentation
+                </a>
+                
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+    <div id="main">
+        <div
+            class="sidebar "
+            id="sidebarNav"
+        >
+            
+            <nav>
+                
+                    <h2><a href="index.html">Documentation</a></h2><div class="category"><h3>Global</h3><ul><li><a href="global.html#createDriversRouter">createDriversRouter</a></li><li><a href="global.html#createLeaderboardRouter">createLeaderboardRouter</a></li><li><a href="global.html#createSessionRouter">createSessionRouter</a></li><li><a href="global.html#createStandingsRouter">createStandingsRouter</a></li><li><a href="global.html#createTyresRouter">createTyresRouter</a></li><li><a href="global.html#deepMerge">deepMerge</a></li><li><a href="global.html#getDriverLeaderboard">getDriverLeaderboard</a></li><li><a href="global.html#getDriverStandings">getDriverStandings</a></li><li><a href="global.html#getDriverTyres">getDriverTyres</a></li><li><a href="global.html#getDriversDirectory">getDriversDirectory</a></li><li><a href="global.html#getEnrichedTeamRadio">getEnrichedTeamRadio</a></li><li><a href="global.html#getLiveLeaderboard">getLiveLeaderboard</a></li><li><a href="global.html#getLiveStandings">getLiveStandings</a></li><li><a href="global.html#getLiveTyres">getLiveTyres</a></li><li><a href="global.html#isPlainObject">isPlainObject</a></li><li><a href="global.html#sortRacingNumbers">sortRacingNumbers</a></li></ul></div>
+                
+            </nav>
+        </div>
+        <div class="core" id="main-content-wrapper">
+            <div class="content">
+                <header class="page-title">
+                    <p>Source</p>
+                    <h1>services/leaderboard-service.js</h1>
+                </header>
+                
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**
+ * @file leaderboard-service.js
+ * @description Service responsible for assembling live telemetry, driver standings, tyre strategies,
+ * and session diagnostics directly from SignalR Core raw data streams without altering field names or case (PascalCase preserved).
+ */
+
+const { deepMerge } = require('../utils/merge');
+
+/**
+ * Helper to sort a list of racing numbers dynamically by live Position, fallback to GridPos/Line.
+ * @param {Array&lt;string>} racingNumbers - Array of driver racing number IDs.
+ * @param {Object} lines - Keyed object containing driver telemetry/metadata.
+ * @returns {Array&lt;string>} Sorted array of racing number IDs.
+ */
+function sortRacingNumbers(racingNumbers, lines) {
+    return Array.from(racingNumbers).sort((numA, numB) => {
+        const driverA = lines[numA] || {};
+        const driverB = lines[numB] || {};
+
+        const posA = driverA.Position ? parseInt(driverA.Position, 10) : 999;
+        const posB = driverB.Position ? parseInt(driverB.Position, 10) : 999;
+
+        const validPosA = !isNaN(posA) ? posA : 999;
+        const validPosB = !isNaN(posB) ? posB : 999;
+
+        if (validPosA !== validPosB) {
+            return validPosA - validPosB;
+        }
+
+        const gridA = driverA.GridPos ? parseInt(driverA.GridPos, 10) : driverA.Line || 999;
+        const gridB = driverB.GridPos ? parseInt(driverB.GridPos, 10) : driverB.Line || 999;
+
+        if (gridA !== gridB) {
+            return gridA - gridB;
+        }
+
+        return parseInt(numA, 10) - parseInt(numB, 10);
+    });
+}
+
+/**
+ * Builds the comprehensive live leaderboard merging DriverList, TimingData, and TimingAppData per driver.
+ * @param {F1LiveClient} f1Client - Instance of F1LiveClient.
+ * @returns {Object} All-in-one structured response.
+ */
+function getLiveLeaderboard(f1Client) {
+    const timingData = f1Client.getTimingData() || {};
+    const timingLines = timingData.Lines || {};
+    const driverList = f1Client.getDriverList() || {};
+    const timingAppData = f1Client.getTimingAppData() || {};
+    const appLines = timingAppData.Lines || {};
+    const sessionInfo = f1Client.getSessionInfo() || {};
+    const lapCount = f1Client.getLapCount() || {};
+
+    const racingNumbers = new Set([...Object.keys(driverList), ...Object.keys(timingLines), ...Object.keys(appLines)]);
+
+    const mergedLines = {};
+    for (const racingNumber of racingNumbers) {
+        const driverMeta = driverList[racingNumber] || {};
+        const driverApp = appLines[racingNumber] || {};
+        const driverTiming = timingLines[racingNumber] || {};
+
+        const unifiedDriver = {};
+        deepMerge(unifiedDriver, driverMeta);
+        deepMerge(unifiedDriver, driverApp);
+        deepMerge(unifiedDriver, driverTiming);
+
+        if (!unifiedDriver.RacingNumber) {
+            unifiedDriver.RacingNumber = racingNumber;
+        }
+
+        mergedLines[racingNumber] = unifiedDriver;
+    }
+
+    const sortedLeaderboard = sortRacingNumbers(racingNumbers, mergedLines);
+
+    return {
+        Session: sessionInfo,
+        LapCount: lapCount,
+        Leaderboard: sortedLeaderboard,
+        Lines: mergedLines
+    };
+}
+
+/**
+ * Retrieves full combined data for a specific racing number.
+ */
+function getDriverLeaderboard(f1Client, racingNumber) {
+    const leaderboardData = getLiveLeaderboard(f1Client);
+    if (!leaderboardData.Lines[racingNumber]) {
+        return null;
+    }
+
+    const rankIndex = leaderboardData.Leaderboard.indexOf(racingNumber);
+    return {
+        Rank: rankIndex >= 0 ? rankIndex + 1 : null,
+        Data: leaderboardData.Lines[racingNumber]
+    };
+}
+
+/**
+ * Builds dedicated driver standings and classification, combining only DriverList and TimingData
+ * (no tyre stint arrays or root session overhead). Perfect for pure leaderboard display.
+ */
+function getLiveStandings(f1Client) {
+    const timingData = f1Client.getTimingData() || {};
+    const timingLines = timingData.Lines || {};
+    const driverList = f1Client.getDriverList() || {};
+
+    const racingNumbers = new Set([...Object.keys(driverList), ...Object.keys(timingLines)]);
+
+    const standingsLines = {};
+    for (const racingNumber of racingNumbers) {
+        const driverMeta = driverList[racingNumber] || {};
+        const driverTiming = timingLines[racingNumber] || {};
+
+        const unifiedDriver = {};
+        deepMerge(unifiedDriver, driverMeta);
+        deepMerge(unifiedDriver, driverTiming);
+
+        if (!unifiedDriver.RacingNumber) {
+            unifiedDriver.RacingNumber = racingNumber;
+        }
+
+        standingsLines[racingNumber] = unifiedDriver;
+    }
+
+    const sortedLeaderboard = sortRacingNumbers(racingNumbers, standingsLines);
+
+    return {
+        Leaderboard: sortedLeaderboard,
+        Lines: standingsLines
+    };
+}
+
+/**
+ * Retrieves standings data for a single specific driver.
+ */
+function getDriverStandings(f1Client, racingNumber) {
+    const standingsData = getLiveStandings(f1Client);
+    if (!standingsData.Lines[racingNumber]) {
+        return null;
+    }
+
+    const rankIndex = standingsData.Leaderboard.indexOf(racingNumber);
+    return {
+        Rank: rankIndex >= 0 ? rankIndex + 1 : null,
+        Data: standingsData.Lines[racingNumber]
+    };
+}
+
+/**
+ * Builds tyre strategy and stint history from TimingAppData, enriched with driver basic identity
+ * (Tla, BroadcastName, TeamName, TeamColour) from DriverList for instant visual mapping.
+ */
+function getLiveTyres(f1Client) {
+    const timingAppData = f1Client.getTimingAppData() || {};
+    const appLines = timingAppData.Lines || {};
+    const driverList = f1Client.getDriverList() || {};
+    const timingData = f1Client.getTimingData() || {};
+    const timingLines = timingData.Lines || {};
+
+    const racingNumbers = new Set([...Object.keys(driverList), ...Object.keys(appLines)]);
+
+    const tyreLines = {};
+    for (const racingNumber of racingNumbers) {
+        const driverMeta = driverList[racingNumber] || {};
+        const driverApp = appLines[racingNumber] || {};
+        const driverTiming = timingLines[racingNumber] || {};
+
+        // Extract basic identification properties without renaming
+        const identity = {
+            RacingNumber: racingNumber,
+            BroadcastName: driverMeta.BroadcastName || null,
+            Tla: driverMeta.Tla || null,
+            TeamName: driverMeta.TeamName || null,
+            TeamColour: driverMeta.TeamColour || null,
+            Position: driverTiming.Position || driverApp.Position || null,
+            GridPos: driverApp.GridPos || null,
+            Line: driverApp.Line !== undefined ? driverApp.Line : driverMeta.Line || null
+        };
+
+        const unifiedTyreDriver = {};
+        deepMerge(unifiedTyreDriver, identity);
+        deepMerge(unifiedTyreDriver, driverApp);
+
+        tyreLines[racingNumber] = unifiedTyreDriver;
+    }
+
+    const sortedLeaderboard = sortRacingNumbers(racingNumbers, tyreLines);
+
+    return {
+        Leaderboard: sortedLeaderboard,
+        Lines: tyreLines
+    };
+}
+
+/**
+ * Retrieves tyre compound and stint history for a single specific driver.
+ */
+function getDriverTyres(f1Client, racingNumber) {
+    const tyreData = getLiveTyres(f1Client);
+    if (!tyreData.Lines[racingNumber]) {
+        return null;
+    }
+
+    return {
+        RacingNumber: racingNumber,
+        Data: tyreData.Lines[racingNumber]
+    };
+}
+
+/**
+ * Retrieves official driver directory and metadata from F1 SignalR DriverList channel.
+ */
+function getDriversDirectory(f1Client) {
+    const driverList = f1Client.getDriverList() || {};
+    return {
+        Drivers: driverList
+    };
+}
+
+/**
+ * Retrieves team radio transmissions enriched with driver basic identity from DriverList.
+ */
+function getEnrichedTeamRadio(f1Client) {
+    const teamRadio = f1Client.getTeamRadio() || [];
+    const driverList = f1Client.getDriverList() || {};
+
+    const enrichedCaptures = teamRadio.map((capture) => {
+        const racingNumber = capture.RacingNumber;
+        const driverMeta = driverList[racingNumber] || {};
+        return {
+            ...capture,
+            Tla: driverMeta.Tla || null,
+            BroadcastName: driverMeta.BroadcastName || null,
+            TeamName: driverMeta.TeamName || null,
+            TeamColour: driverMeta.TeamColour || null
+        };
+    });
+
+    return {
+        Captures: enrichedCaptures
+    };
+}
+
+module.exports = {
+    getLiveLeaderboard,
+    getDriverLeaderboard,
+    getLiveStandings,
+    getDriverStandings,
+    getLiveTyres,
+    getDriverTyres,
+    getDriversDirectory,
+    getEnrichedTeamRadio
+};
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+            </div>
+            
+            <footer class="footer">
+                <div class="content has-text-centered">
+                    <p>Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a></p>
+                    <p class="sidebar-created-by">
+                        <a href="https://github.com/SoftwareBrothers/better-docs" target="_blank">BetterDocs theme</a> provided with <i class="fas fa-heart"></i> by
+                        <a href="http://softwarebrothers.co" target="_blank">SoftwareBrothers - JavaScript Development Agency</a>
+                    </p>
+                </div>
+            </footer>
+            
+        </div>
+        <div id="side-nav" class="side-nav">
+        </div>
+    </div>
+<script src="scripts/app.min.js"></script>
+<script>PR.prettyPrint();</script>
+<script src="scripts/linenumber.js"> </script>
+
+
+</body>
+</html>
