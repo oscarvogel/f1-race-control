@@ -152,10 +152,13 @@ const viewBox = computed(() => {
 /**
  * Por que no hay autos dibujados.
  *
- * El feed de F1 publica las coordenadas (canales `CarData` y `Positions`)
- * durante la carrera, no durante la clasificacion: alla la suscripcion es
- * valida pero no llega ningun mensaje de esos canales. Verificado contra el
- * snapshot del feed durante la quali de Austin 2026.
+ * Verificado contra el feed en vivo durante el GP de Estados Unidos 2026
+ * (25/10): los canales que traen las coordenadas son los comprimidos,
+ * `Position.z` y `CarData.z`, y **el feed no los publica a una conexion
+ * anonima**: responden 401. El cronometraje normal (clasificacion, vueltas,
+ * control de carrera) sigue llegando sin credenciales, pero las coordenadas
+ * de cada auto exigen iniciar sesion con una cuenta de formula1.com (mismo
+ * flujo que usa FastF1, con la suscripcion F1TV activa).
  *
  * Se dice explicitamente en vez de dejar el panel vacio y que el usuario
  * piense que el mapa esta roto.
@@ -164,14 +167,7 @@ const emptyReason = computed(() => {
   if (store.viewMode === 'historical') {
     return 'OpenF1 no tiene posiciones GPS para esta sesion.'
   }
-  const enClasificacion = store.isQualifying
-  if (store.sessionIsActive) {
-    return 'El feed no publica coordenadas en esta sesion: los canales CarData y Positions no envian mensajes durante la clasificacion. En la carrera si llegan.'
-  }
-  if (enClasificacion) {
-    return 'El feed no publico coordenadas durante esta clasificacion: los canales CarData y Positions no envian mensajes en ese tipo de sesion.'
-  }
-  return 'El proveedor no entrego coordenadas para esta sesion.'
+  return 'El feed solo entrega las coordenadas de los autos a conexiones autenticadas: hace falta una cuenta de formula1.com con la suscripcion F1TV activa (F1_USERNAME y F1_PASSWORD en el .env). Sin eso, la clasificacion funciona igual pero el mapa queda vacio.'
 })
 
 /** Leyenda: en el replay los autos estan en su ultima posicion conocida. */
