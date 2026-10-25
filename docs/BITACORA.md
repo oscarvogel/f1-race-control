@@ -1091,6 +1091,17 @@ superior viene vacio), asi que el cambio es neutro para lo ya verificado
   clasificacion, el dock aparece con los datos reales de la quali (1:34.035 de
   Antonelli, 1:34.214 de Verstappen), el modal compara los tres con su delta,
   el cuarto piloto es rechazado con aviso y la seleccion sobrevive a la recarga.
+- **La verificacion LIVE sigue en verde despues del cambio del proveedor**:
+  22/22 posiciones y 22/22 tiempos de Q1/Q2/Q3 contra el resultado oficial.
+- **En produccion** (PR #1, merge `87d63cc`, despliegue `cu3hcfdvp9we1cwrwu1qeeek`):
+  el bundle servido es el mismo que se construyo localmente (`index-B0-OjqEx.js`), se
+  eligieron tres pilotos, el dock y el modal se ven con los datos reales y el
+  cuarto piloto es rechazado con aviso.
+
+La entrada al sitio para la verificacion se hizo **sin escribir la clave en el
+chat**: un servidor auxiliar en loopback (`.run/serve_creds.py`, solo
+127.0.0.1) entrego la credencial a la pagina local, que la posteo al login de
+produccion; el servidor se detuvo y la sesion se cerro al terminar.
 
 ### Pendiente
 
