@@ -128,10 +128,16 @@ cabecera cierra la sesión.
 
 Detalle completo en [`docs/BITACORA.md`](docs/BITACORA.md) §14.
 
-> El puerto del frontend es **5174** y no 5173 porque en esta máquina el 5173
-> ya lo ocupa otro proyecto (`0.0.0.0:5173` en Windows). Se cambia en
-> `.env` (`FRONTEND_PORT`) y en `scripts/start-dev.sh`. La API (8000) y el
-> proveedor live (3000) no tienen conflicto.
+> El puerto del frontend es **5174** y no 5173: en esta máquina el 5173 está
+> ocupado por otro servicio y, además, quedó un vite de una corrida anterior de
+> este proyecto escuchando en el 5173 dentro de WSL (por eso al abrir ese puerto
+> se ve la misma app). Se cambia en `.env` (`FRONTEND_PORT`).
+>
+> `scripts/start-dev.sh` detecta quién tiene cada puerto antes de arrancar: si
+> el puerto ya lo sirve **este** proyecto, reutiliza ese proceso en lugar de
+> levantar un segundo (y guarda el PID real, que es el del servidor y no el del
+> envoltorio); si lo tiene **otro** proyecto, avisa `[CONFLICTO]` y no lo toca.
+> La API (8000) y el proveedor live (3000) no tienen conflicto.
 
 Otros scripts:
 
@@ -210,8 +216,18 @@ el proveedor necesita parches locales que no existen en el upstream —
 
 1. `bind` en `127.0.0.1` en lugar de `0.0.0.0`.
 2. CORS restringido a orígenes de loopback en vez de abierto.
-3. Suscripción al canal `CarData` de SignalR y la ruta de solo lectura
-   `/api/car-data`, que alimenta la vista del circuito.
+3. Suscripción a los canales de coordenadas y telemetría por auto
+   (`Position.z` y `CarData.z`, los nombres comprimidos que publica el feed) y
+   la ruta de solo lectura `/api/car-data`, que alimenta la vista del circuito.
+4. Inicio de sesión en la cuenta de formula1.com para el token que el feed
+   exige en esos canales (`F1_USERNAME` / `F1_PASSWORD` en el `.env`).
+
+> **El mapa y la telemetría por auto dependen de una cuenta de F1.** El
+> cronometraje (clasificación, vueltas, control de carrera) llega sin
+> credenciales; las coordenadas de cada auto y la telemetría en vivo
+> responden `401` a una conexión anónima. Con una cuenta de formula1.com con
+> suscripción F1TV activa, el servicio inicia sesión solo y el mapa se llena
+> solo. Sin eso, la app funciona igual y el panel del circuito lo explica.
 
 Un submódulo no puede versionar esos parches: quedaría la versión original del
 upstream y el proyecto dejaría de funcionar al clonar. Por eso el clon de git
