@@ -18,6 +18,39 @@ import type {
   TimingEntry,
 } from '@/types'
 
+/**
+ * Maximo de pilotos que se pueden seguir a la vez.
+ *
+ * Tres es el tope que se pidio: con mas, el dock inferior deja de ser legible
+ * en 1366x768 y se pierde el sentido de "seguir a un piloto".
+ */
+export const MAX_FOLLOWED_DRIVERS = 3
+
+/** Clave con la que se guarda la seleccion en el navegador. */
+const FOLLOWED_STORAGE_KEY = 'race-center.followed-drivers'
+
+/** Que paso al pedir seguir a un piloto. */
+export type FollowResult = 'added' | 'removed' | 'limit'
+
+/**
+ * Lee los pilotos seguidos del navegador.
+ *
+ * Si el almacenamiento no esta disponible (modo privado, permisos), se
+ * devuelve una lista vacia y la seleccion sigue funcionando en memoria.
+ */
+function loadFollowedDrivers(): string[] {
+  try {
+    if (typeof window === 'undefined') return []
+    const raw = window.localStorage.getItem(FOLLOWED_STORAGE_KEY)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.map((value) => String(value)).slice(0, MAX_FOLLOWED_DRIVERS)
+  } catch {
+    return []
+  }
+}
+
 export type SortKey =
   | 'position'
   | 'driver'
@@ -55,6 +88,32 @@ export const useRaceStore = defineStore('race', () => {
   const lastUpdated = ref<Date | null>(null)
   const selectedDriver = ref<string | null>(null)
   const compareDriver = ref<string | null>(null)
+
+  /**
+   * Pilotos que el usuario sigue durante la sesion.
+   *
+   * Se muestran en un dock fijo abajo, con sus datos en vivo. La seleccion
+   * se guarda en el navegador para que sobreviva a una recarga y a un cambio
+   * de sesion (en vivo <-> historica).
+   */
+  const followedDrivers = ref<string[]>(loadFollowedDrivers())
+
+  /** Ya se ocupan los tres cupos: el boton avisa en vez de fallar en silencio. */
+  const followLimitReached = computed(
+    () => followedDrivers.value.length >= MAX_FOLLOWED_DRIVERS,
+  )
+
+  /**
+   * Entradas de clasificacion de los pilotos seguidos, en el orden en que se
+   * eligieron. Un piloto seguido que todavia no aparece en la clasificacion
+   * (por ejemplo, se acaba de cambiar de sesion) queda fuera de la lista: no
+   * hay datos suyos que mostrar.
+   */
+  const followedEntries = computed<TimingEntry[]>(() =>
+    followedDrivers.value
+      .map((number) => timing.value.find((entry) => entry.driver_number === number) ?? null)
+      .filter((entry): entry is TimingEntry => entry !== null),
+  )
   const sortKey = ref<SortKey>('position')
   const sortAsc = ref(true)
   const diagnosticsOpen = ref(false)
@@ -425,6 +484,45 @@ export const useRaceStore = defineStore('race', () => {
     selectedDriver.value = number
   }
 
+  /** Guarda la seleccion en el navegador (si se puede). */
+  function persistFollowedDrivers() {
+    try {
+      window.localStorage.setItem(FOLLOWED_STORAGE_KEY, JSON.stringify(followedDrivers.value))
+    } catch {
+      // Sin persistencia: la seleccion sigue viva en memoria.
+    }
+  }
+
+  /**
+   * Agrega o quita un piloto de la lista de seguidos.
+   *
+   * Devuelve que paso, para que la interfaz pueda avisar cuando no se pudo
+   * agregar (ya estaban los tres cupos) en vez de fallar en silencio.
+   */
+  function toggleFollow(number: string): FollowResult {
+    const indice = followedDrivers.value.indexOf(number)
+    if (indice >= 0) {
+      followedDrivers.value.splice(indice, 1)
+      persistFollowedDrivers()
+      return 'removed'
+    }
+    if (followLimitReached.value) return 'limit'
+    followedDrivers.value.push(number)
+    persistFollowedDrivers()
+    return 'added'
+  }
+
+  /** El piloto esta en la lista de seguidos. */
+  function isFollowing(number: string): boolean {
+    return followedDrivers.value.includes(number)
+  }
+
+  /** Quita todos los pilotos seguidos. */
+  function clearFollowed() {
+    followedDrivers.value = []
+    persistFollowedDrivers()
+  }
+
   function setSort(key: SortKey) {
     if (sortKey.value === key) {
       sortAsc.value = !sortAsc.value
@@ -447,6 +545,12 @@ export const useRaceStore = defineStore('race', () => {
     lastUpdated,
     selectedDriver,
     compareDriver,
+    followedDrivers,
+    followedEntries,
+    followLimitReached,
+    toggleFollow,
+    isFollowing,
+    clearFollowed,
     sortKey,
     sortAsc,
     diagnosticsOpen,
