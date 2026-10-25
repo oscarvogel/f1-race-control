@@ -206,3 +206,39 @@ def test_los_snapshots_en_vivo_se_recortan(db, base_payload):
     historicos = SessionSnapshot.objects.filter(scope="historical").count()
     assert vivos == SNAPSHOT_ROWS, "los snapshots en vivo deberian estar recortados"
     assert historicos == 5, "los historicos no se deben tocar"
+
+
+def test_un_snapshot_de_otra_version_no_se_sirve_desde_la_cache(db):
+    """Un snapshot guardado con otro formato del payload se vuelve a pedir.
+
+    Sin esto, la base puede seguir sirviendo un snapshot viejo (por ejemplo,
+    con las posiciones incompletas por el limite de tasa de OpenF1) durante
+    meses, sin que nadie se entere.
+    """
+    from core import history
+    from core.models import Session, SessionSnapshot
+
+    session = Session.objects.create(
+        provider_id="openf1",
+        provider_session_id="11392",
+        name="Qualifying",
+        session_type="Qualifying",
+    )
+    SessionSnapshot.objects.create(
+        session=session,
+        provider_id="openf1",
+        scope="historical",
+        data_state="HISTORICAL",
+        fingerprint="viejo",
+        payload={
+            "generated_at": "2026-10-24T21:05:00+00:00",
+            "snapshot_version": "v1",  # version anterior
+            "data_state": "HISTORICAL",
+            "session": {"provider_session_id": "11392"},
+            "timing": [],
+            "positions": [],
+            "warnings": [],
+        },
+    )
+
+    assert history.cached_historical_snapshot("11392") is None

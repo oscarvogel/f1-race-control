@@ -40,6 +40,14 @@ CATALOG_TTL_SECONDS = 3600.0
 _SNAPSHOT_CACHE: dict[str, dict[str, Any]] = {}
 SNAPSHOT_TTL_SECONDS = 600.0
 
+# Version del formato del snapshot historico.
+#
+# Se sube cuando cambia la forma de pedir los datos (por ejemplo, cuando las
+# posiciones pasaron a pedirse piloto por piloto y el throttle se arreglo):
+# sin esto, la base seguiria sirviendo el snapshot viejo, con datos
+# incompletos, durante meses.
+SNAPSHOT_VERSION = "v2"
+
 
 def _catalog_session_id(meeting_key: int | None) -> str:
     """Identificador de la sesion donde se guarda el catalogo."""
@@ -414,6 +422,7 @@ async def build_historical_snapshot(session_key: str) -> dict[str, Any] | None:
 
     return {
         "generated_at": _stamp(),
+        "snapshot_version": SNAPSHOT_VERSION,
         "data_state": "HISTORICAL",
         "scope": "historical",
         "session": session.as_dict(),
@@ -462,7 +471,9 @@ def cached_historical_snapshot(session_key: str) -> dict[str, Any] | None:
     now = time.monotonic()
     entry = _SNAPSHOT_CACHE.get(key)
     if entry is not None and entry["expires"] > now:
-        return dict(entry["payload"])
+        payload = dict(entry["payload"])
+        if payload.get("snapshot_version") == SNAPSHOT_VERSION:
+            return payload
 
     session = Session.objects.filter(
         provider_id="openf1", provider_session_id=key
@@ -473,7 +484,11 @@ def cached_historical_snapshot(session_key: str) -> dict[str, Any] | None:
         )
         if stored is not None:
             payload = dict(stored.payload)
-            if not payload.get("warnings"):
+            # Un snapshot de otra version del formato se vuelve a pedir: puede
+            # traer datos incompletos (por ejemplo, las posiciones que se
+            # quedaron fuera por el limite de tasa de OpenF1).
+            version_ok = payload.get("snapshot_version") == SNAPSHOT_VERSION
+            if not payload.get("warnings") and version_ok:
                 payload["found"] = True
                 payload["_snapshot_id"] = stored.id
                 payload["_session_pk"] = stored.session_id
