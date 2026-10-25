@@ -316,20 +316,38 @@ class FreeLiveTimingProvider(TimingProvider):
 
         best_lap_times = self._normalise_best_lap_times(line.get("BestLapTimes"))
 
-        # La "mejor vuelta" del piloto es su mejor tiempo de la sesion.
+        # La "mejor vuelta" que cuenta es la que publico el feed en
+        # `BestLapTime`: en una eliminatoria, ese campo trae el tiempo del
+        # **ultimo segmento alcanzado** (el Q3 de los que llegaron a Q3, el Q2
+        # de los que se quedaron en Q2...), que es el tiempo con el que se
+        # clasifican.
         #
-        # Durante el knockout (Q3) el feed vacia el `BestLapTime` de nivel
-        # superior: pasa a `{"Value": "", "Lap": N, "_deleted": ["Lap"]}`
-        # porque lo que cuenta ahi es la vuelta de Q3. Si solo se mirara ese
-        # campo, los pilotos que aun no hicieron su vuelta de Q3 aparecian
-        # sin mejor vuelta, aunque tuvieran un Q1 o un Q2. Por eso se compara
-        # con los mejores por segmento y se queda el mas rapido de todos.
-        for segmento, tiempo in best_lap_times.items():
-            if tiempo is None:
-                continue
-            if best_lap is None or tiempo < best_lap:
-                best_lap = tiempo
-                best_lap_lap = self._best_lap_number(line.get("BestLapTimes"), segmento)
+        # No se puede tomar el mas rapido de todos los segmentos: en la
+        # clasificacion de Austin 2026, el mejor tiempo de Norris (1:34.539 en
+        # Q2) no cuenta porque se clasifica con su Q3 (1:35.049), y el de
+        # Leclerc (1:34.198 en Q2) tampoco: se clasifica con su Q3 (1:34.267).
+        # Con el minimo entre segmentos la app mostraba tiempos que no
+        # existen en la clasificacion oficial.
+        #
+        # Durante el knockout (Q3) el feed vacia ese campo: pasa a
+        # `{"Value": "", "Lap": N, "_deleted": ["Lap"]}` porque lo que cuenta
+        # ahi es la vuelta de Q3. Si solo se mirara ese campo, los pilotos que
+        # aun no hicieron su vuelta de Q3 aparecian sin mejor vuelta, aunque
+        # tuvieran un Q1 o un Q2. Por eso, cuando viene vacio, se recurre a los
+        # mejores por segmento y se queda el mas rapido de todos.
+        if best_lap is None:
+            for segmento, tiempo in best_lap_times.items():
+                if tiempo is None:
+                    continue
+                if best_lap is None or tiempo < best_lap:
+                    best_lap = tiempo
+                    best_lap_lap = self._best_lap_number(line.get("BestLapTimes"), segmento)
+        else:
+            # El feed marca con `_deleted` el numero de vuelta cuando ya no es
+            # confiable (en la eliminatoria quedo desfasado). En ese caso no
+            # se muestra un numero de vuelta equivocado.
+            if isinstance(best_lap_raw, dict) and "Lap" in (best_lap_raw.get("_deleted") or []):
+                best_lap_lap = None
 
         last_lap_raw = line.get("LastLapTime") or {}
         last_lap = parse_lap_time(last_lap_raw.get("Value") if isinstance(last_lap_raw, dict) else last_lap_raw)
@@ -488,6 +506,35 @@ class FreeLiveTimingProvider(TimingProvider):
         return sectors
 
     @staticmethod
+    def _best_lap_times_items(raw: Any) -> list[tuple[int, Any]]:
+        """Los `BestLapTimes` del feed, con el indice de su segmento.
+
+        El feed los entrega de dos formas y hay que soportarlas las dos:
+
+        * como **lista** (``[{...}, {...}, {...}]``), que es lo que llega por
+          ``/api/standings`` y ``/api/leaderboard``: la posicion es el indice.
+        * como **mapa** con clave ``"0"``/``"1"``/``"2"``, que es lo que usan
+          algunos payloads.
+
+        Con el mapa hay que respetar la clave: si falta un segmento, los que
+        quedan **no** se corren de lugar (si no, el Q3 pasaria a leerse como
+        Q2).
+        """
+        items: list[tuple[int, Any]] = []
+        if isinstance(raw, dict):
+            for key, value in raw.items():
+                try:
+                    indice = int(str(key))
+                except (TypeError, ValueError):
+                    continue
+                items.append((indice, value))
+            items.sort(key=lambda item: item[0])
+            return items
+        if isinstance(raw, list):
+            return list(enumerate(raw))
+        return []
+
+    @staticmethod
     def _normalise_best_lap_times(raw: Any) -> dict[str, float | None]:
         """Separa las mejores vueltas por segmento de clasificacion.
 
@@ -495,10 +542,8 @@ class FreeLiveTimingProvider(TimingProvider):
         ``"0"``/``"1"``/``"2"`` que corresponden a Q1/Q2/Q3.
         """
         result: dict[str, float | None] = {}
-        if not isinstance(raw, dict):
-            return result
-        for key, value in raw.items():
-            segment = _SEGMENT_BY_KEY.get(str(key))
+        for indice, value in FreeLiveTimingProvider._best_lap_times_items(raw):
+            segment = _SEGMENT_BY_KEY.get(str(indice))
             if segment is None:
                 continue
             if isinstance(value, dict):
@@ -510,15 +555,16 @@ class FreeLiveTimingProvider(TimingProvider):
     @staticmethod
     def _best_lap_number(raw: Any, segment: str) -> int | None:
         """Numero de vuelta del mejor tiempo de un segmento."""
-        if not isinstance(raw, dict):
-            return None
         indice = next((k for k, v in _SEGMENT_BY_KEY.items() if v == segment), None)
         if indice is None:
             return None
-        value = raw.get(indice)
-        if not isinstance(value, dict):
-            return None
-        return to_int(value.get("Lap"))
+        for posicion, value in FreeLiveTimingProvider._best_lap_times_items(raw):
+            if posicion != int(indice):
+                continue
+            if not isinstance(value, dict):
+                return None
+            return to_int(value.get("Lap"))
+        return None
 
     @staticmethod
     def _stint_list(stints: Any) -> list[dict[str, Any]]:

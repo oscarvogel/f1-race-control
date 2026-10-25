@@ -129,6 +129,31 @@ function segmentTime(entry: TimingEntry, segment: 'Q1' | 'Q2' | 'Q3'): string {
   return value?.time_display ?? '—'
 }
 
+/**
+ * Segmento del que viene el tiempo de clasificacion (Q1/Q2/Q3).
+ *
+ * En una eliminatoria el piloto se clasifica con el tiempo del **ultimo
+ * segmento alcanzado**, no con el mas rapido de la sesion: en Austin 2026,
+ * Leclerc se clasificó con su Q3 (1:34.267) aunque su Q2 (1:34.198) fuera mas
+ * rapido, y Norris con su Q3 (1:35.049) aunque su mejor vuelta de la sesion
+ * fuera una vuelta anulada de 1:34.379.
+ *
+ * Sin la etiqueta, un 1:34.267 de Q3 al lado de un 1:34.198 de Q2 parece un
+ * error de la app. Se toma el **ultimo** segmento que coincide: si un piloto
+ * repite un tiempo, el que cuenta es el del segmento mas avanzado.
+ */
+function bestLapSegmentOf(entry: TimingEntry): string | null {
+  if (!store.isQualifying) return null
+  if (entry.best_lap_time == null) return null
+  let encontrado: string | null = null
+  for (const segment of ['Q1', 'Q2', 'Q3'] as const) {
+    const lap = entry.best_lap_times?.[segment]
+    if (!lap || lap.time == null) continue
+    if (Math.abs(lap.time - entry.best_lap_time) < 0.002) encontrado = segment
+  }
+  return encontrado
+}
+
 function isOverallFastestLap(entry: TimingEntry): boolean {
   return (
     entry.best_lap_time != null &&
@@ -354,6 +379,13 @@ function sortIcon(key: SortKey) {
                   "
                 >
                   {{ entry.best_lap_time_display ?? '—' }}
+                </span>
+                <span
+                  v-if="bestLapSegmentOf(entry)"
+                  class="rounded bg-race-800/80 px-1 py-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-400"
+                  :title="`Tiempo de clasificacion del segmento ${bestLapSegmentOf(entry)}`"
+                >
+                  {{ bestLapSegmentOf(entry) }}
                 </span>
                 <span
                   v-if="isOverallFastestLap(entry)"

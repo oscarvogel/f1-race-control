@@ -81,6 +81,78 @@ RETRY_PASS_DELAY_SECONDS = 5.0
 _last_request_at = 0.0
 _cooldown_until = 0.0
 
+# --- Tiempos oficiales de clasificacion --------------------------------------- #
+#
+# En una sesion de eliminatorias (clasificacion o sprint), OpenF1 publica
+# ``duration`` como **lista**: el mejor tiempo de cada segmento (Q1/Q2/Q3). En
+# practicas y carreras es un escalar: el tiempo de la sesion.
+#
+# El tiempo que cuenta para la clasificacion es el del **ultimo segmento
+# alcanzado**, no el mas rapido de todos:
+#
+#   * Un piloto que llego a Q3 se clasifica con su tiempo de Q3, aunque en Q2
+#     haya hecho un tiempo mas rapido: ese ya no cuenta.
+#   * Los eliminados en Q2 se clasifican con su tiempo de Q2, y los de Q1 con
+#     su tiempo de Q1.
+#
+# Los eliminados van **detras** de los que llegaron mas lejos, aunque su
+# tiempo sea mejor. En la clasificacion de Austin 2026, Lindblad (Q3, 1:36.049)
+# quedo P9 por delante de Lawson (Q2, 1:35.058, P10): no se ordenan todos
+# juntos por tiempo, se ordenan por grupo de segmento.
+#
+# Ademas, ``/laps`` trae tambien las vueltas que la federacion annulo (por
+# ejemplo por track limits) y OpenF1 no las marca: en los datos de 2026 el
+# endpoint ya no trae el campo ``deleted``. Por eso tomar la vuelta mas rapida
+# de ``/laps`` daba tiempos que no existen en la clasificacion oficial (la
+# mejor vuelta de Norris, 1:34.379, fue anulada y su tiempo valido de Q3 es
+# 1:35.049).
+#
+# La fuente del tiempo de clasificacion es, entonces, ``/session_result``.
+LAP_MATCH_TOLERANCE = 0.002
+
+
+def _official_times(row: dict[str, Any]) -> list[float | None]:
+    """Los tiempos de un piloto tal como los publica ``/session_result``.
+
+    En una eliminatoria es una lista (Q1/Q2/Q3); en el resto de sesiones, un
+    escalar. Si no hay dato, devuelve una lista vacia.
+    """
+    duracion = row.get("duration")
+    if isinstance(duracion, list):
+        return [to_float(valor) for valor in duracion]
+    valor = to_float(duracion)
+    return [] if valor is None else [valor]
+
+
+def _classification_time(tiempos: list[float | None]) -> float | None:
+    """El tiempo que cuenta para la clasificacion: el del ultimo segmento."""
+    for valor in reversed(tiempos):
+        if valor is not None:
+            return valor
+    return None
+
+
+def _classification_gap(gap: Any) -> float | None:
+    """La diferencia con el lider en el segmento que cuenta.
+
+    En una eliminatoria ``gap_to_leader`` tambien viene como lista (una por
+    segmento). Cuenta la del ultimo segmento alcanzado, como los tiempos.
+    """
+    if isinstance(gap, list):
+        for valor in reversed(gap):
+            resultado = to_float(valor)
+            if resultado is not None:
+                return resultado
+        return None
+    return to_float(gap)
+
+
+def _same_time(a: float | None, b: float | None) -> bool:
+    """Si dos tiempos son el mismo, tolerando el redondeo."""
+    if a is None or b is None:
+        return False
+    return abs(a - b) <= LAP_MATCH_TOLERANCE
+
 
 class OpenF1Provider(TimingProvider):
     """Proveedor historico de datos de cronometraje, vueltas, clima y control."""
@@ -452,43 +524,98 @@ class OpenF1Provider(TimingProvider):
             if row.get("driver_number") is not None
         }
 
-        best_lap: dict[str, dict[str, Any]] = {}
+        laps_por_piloto: dict[str, list[dict[str, Any]]] = {}
         for lap in laps:
-            number = str(lap.get("driver_number"))
-            duration = to_float(lap.get("lap_duration"))
-            if duration is None:
-                continue
-            current = best_lap.get(number)
-            if current is None or duration < current["duration"]:
-                best_lap[number] = {
-                    "duration": duration,
-                    "lap_number": to_int(lap.get("lap_number")),
-                    "s1": to_float(lap.get("duration_sector_1")),
-                    "s2": to_float(lap.get("duration_sector_2")),
-                    "s3": to_float(lap.get("duration_sector_3")),
-                }
+            laps_por_piloto.setdefault(str(lap.get("driver_number")), []).append(lap)
+
+        # Tiempos oficiales: los publica /session_result y son los que cuentan
+        # para la clasificacion (ver la nota de `_official_times`).
+        oficiales: dict[str, dict[str, Any]] = {}
+        for row in results:
+            numero = str(row.get("driver_number"))
+            tiempos = _official_times(row)
+            oficiales[numero] = {
+                "time": _classification_time(tiempos),
+                "times": tiempos,
+                "gap": _classification_gap(row.get("gap_to_leader")),
+                # Solo una eliminatoria tiene segmentos (Q1/Q2/Q3). En practicas
+                # y carreras `duration` es un escalar y no hay nada que
+                # etiquetar: llamarle "Q1" a la mejor vuelta seria inventar.
+                "knockout": isinstance(row.get("duration"), list),
+            }
+
+        def elegir_vuelta(numero: str) -> tuple[float | None, int | None, list[float | None]]:
+            """La vuelta que cuenta para la clasificacion de un piloto.
+
+            Primero el tiempo oficial de ``/session_result``; los sectores se
+            toman de la vuelta de ``/laps`` que tiene ese tiempo exacto. Si no
+            hay tiempo oficial, se usa la vuelta mas rapida registrada.
+            """
+            filas = laps_por_piloto.get(numero) or []
+            oficial = (oficiales.get(numero) or {}).get("time")
+            if oficial is not None:
+                iguales = [
+                    fila for fila in filas
+                    if _same_time(to_float(fila.get("lap_duration")), oficial)
+                ]
+                if not iguales:
+                    # El tiempo oficial se conoce, pero su vuelta no esta en
+                    # /laps: se muestra el tiempo y los sectores quedan vacios.
+                    # Nunca se inventa un desglose.
+                    return oficial, None, []
+                fila = min(iguales, key=lambda f: to_int(f.get("lap_number")) or 0)
+                return (
+                    oficial,
+                    to_int(fila.get("lap_number")),
+                    [
+                        to_float(fila.get("duration_sector_1")),
+                        to_float(fila.get("duration_sector_2")),
+                        to_float(fila.get("duration_sector_3")),
+                    ],
+                )
+
+            candidatas = [f for f in filas if to_float(f.get("lap_duration")) is not None]
+            if not candidatas:
+                return None, None, []
+            fila = min(candidatas, key=lambda f: to_float(f.get("lap_duration")))
+            return (
+                to_float(fila.get("lap_duration")),
+                to_int(fila.get("lap_number")),
+                [
+                    to_float(fila.get("duration_sector_1")),
+                    to_float(fila.get("duration_sector_2")),
+                    to_float(fila.get("duration_sector_3")),
+                ],
+            )
 
         entries: list[TimingEntry] = []
         for row in results:
             number = str(row.get("driver_number"))
-            best = best_lap.get(number)
+            oficial = oficiales.get(number) or {}
+            best_time, best_lap_number, tiempos_sector = elegir_vuelta(number)
             sectors: list[Sector] = []
-            if best:
-                for index, value in enumerate((best.get("s1"), best.get("s2"), best.get("s3"))):
-                    sectors.append(Sector(index=index, time=value, personal_fastest=best is not None))
+            for index, value in enumerate(tiempos_sector):
+                sectors.append(Sector(index=index, time=value, personal_fastest=True))
 
-            duration = to_float(row.get("duration"))
-            gap = row.get("gap_to_leader")
+            gap_value = oficial.get("gap")
             gap_text = None
-            if gap is not None:
-                gap_value = to_float(gap)
-                # Ojo: en la clasificacion de Austin 2026, OpenF1 devolvio
-                # "gap_to_leader" vacio o nulo para varios pilotos. Sin este
-                # chequeo, `"+%.3f" % None` revienta con "must be real number,
-                # not NoneType" y el snapshot historico entero se cae.
-                # Sin dato, no hay gap: queda None (se dibuja "—"), nunca 0.
-                if gap_value is not None:
-                    gap_text = "LEADER" if gap_value == 0 else "+%.3f" % gap_value
+            # Ojo: en la clasificacion de Austin 2026, OpenF1 devolvio
+            # "gap_to_leader" vacio o nulo para varios pilotos. Sin este
+            # chequeo, `"+%.3f" % None` revienta con "must be real number,
+            # not NoneType" y el snapshot historico entero se cae.
+            # Sin dato, no hay gap: queda None (se dibuja "—"), nunca 0.
+            if gap_value is not None:
+                gap_text = "LEADER" if gap_value == 0 else "+%.3f" % gap_value
+
+            # Mejores vueltas por segmento (Q1/Q2/Q3), igual que las publica
+            # el feed en vivo: asi la columna se puede etiquetar con el
+            # segmento del que viene.
+            tiempos_oficiales = oficial.get("times") or []
+            best_lap_times: dict[str, float | None] = {}
+            if oficial.get("knockout"):
+                for indice, nombre in enumerate(("Q1", "Q2", "Q3")):
+                    if indice < len(tiempos_oficiales):
+                        best_lap_times[nombre] = tiempos_oficiales[indice]
 
             entries.append(
                 TimingEntry(
@@ -496,8 +623,9 @@ class OpenF1Provider(TimingProvider):
                     driver_number=number,
                     driver=driver_map.get(number),
                     position=to_int(row.get("position")),
-                    best_lap_time=best.get("duration") if best else None,
-                    best_lap_number=best.get("lap_number") if best else None,
+                    best_lap_time=best_time,
+                    best_lap_number=best_lap_number,
+                    best_lap_times=best_lap_times,
                     sectors=sectors,
                     gap_to_leader=gap_text,
                     number_of_laps=to_int(row.get("number_of_laps")),
@@ -763,13 +891,19 @@ class OpenF1Provider(TimingProvider):
         Se agrega el compuesto del stint en el que se hizo esa vuelta (de
         ``/stints``), para poder decir con que neumatico se hizo el mejor
         tiempo.
+
+        La vuelta que se muestra es la que **cuenta para la clasificacion**:
+        el tiempo oficial de ``/session_result`` y la vuelta de ``/laps`` que
+        lo tiene. No se usa la vuelta mas rapida de ``/laps`` porque ahi estan
+        tambien las vueltas anuladas por la federacion (OpenF1 ya no las
+        marca con ``deleted``), que no existen en la clasificacion oficial.
         """
         key = str(session_key or self._session_key or "")
         if not key:
             return []
 
         filas = await self._get_json("/laps", {"session_key": key})
-        mejores: dict[str, dict[str, Any]] = {}
+        laps_por_piloto: dict[str, list[dict[str, Any]]] = {}
         for fila in filas or []:
             duracion = fila.get("lap_duration")
             if not duracion:
@@ -777,8 +911,41 @@ class OpenF1Provider(TimingProvider):
             numero = str(fila.get("driver_number") or "")
             if not numero:
                 continue
-            if numero not in mejores or duracion < mejores[numero]["lap_duration"]:
-                mejores[numero] = fila
+            laps_por_piloto.setdefault(numero, []).append(fila)
+
+        # Tiempo oficial de clasificacion de cada piloto: el del ultimo
+        # segmento alcanzado (ver `_official_times`).
+        oficiales: dict[str, float] = {}
+        try:
+            resultados = await self._get_json("/session_result", {"session_key": key})
+        except ProviderError:
+            resultados = []
+        for fila in resultados or []:
+            numero = str(fila.get("driver_number") or "")
+            if not numero:
+                continue
+            tiempo = _classification_time(_official_times(fila))
+            if tiempo is not None:
+                oficiales[numero] = tiempo
+
+        mejores: dict[str, dict[str, Any]] = {}
+        for numero, laps in laps_por_piloto.items():
+            oficial = oficiales.get(numero)
+            if oficial is not None:
+                iguales = [
+                    f for f in laps
+                    if _same_time(to_float(f.get("lap_duration")), oficial)
+                ]
+                if not iguales:
+                    # El tiempo oficial se conoce pero su vuelta no esta en
+                    # /laps: se muestra el tiempo y los sectores quedan vacios.
+                    mejores[numero] = {"lap_duration": oficial, "lap_number": None}
+                    continue
+                mejores[numero] = min(iguales, key=lambda f: to_int(f.get("lap_number")) or 0)
+                continue
+            validas = [f for f in laps if to_float(f.get("lap_duration")) is not None]
+            if validas:
+                mejores[numero] = min(validas, key=lambda f: to_float(f.get("lap_duration")))
 
         if not mejores:
             return []

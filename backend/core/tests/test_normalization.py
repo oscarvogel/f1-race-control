@@ -231,11 +231,13 @@ def test_normaliza_la_clasificacion_del_proveedor_live():
 
     leader = entries[0]
     assert leader.position == 1
-    # La mejor vuelta es el mejor tiempo de todos los segmentos: el valor de
-    # nivel superior (`BestLapTime`) sigue el segmento en curso y se vacia
-    # durante el knockout de Q3.
-    assert leader.best_lap_time == pytest.approx(94.5)
-    assert leader.best_lap_number == 14
+    # La mejor vuelta es la que publico el feed en `BestLapTime`: el tiempo con
+    # el que el piloto se clasifica (el del segmento en curso; vacio durante el
+    # knockout de Q3, y en ese caso se usa el mejor de los segmentos).
+    # Tomar el mas rapido de todos los segmentos daba tiempos que no existen
+    # en la clasificacion oficial.
+    assert leader.best_lap_time == pytest.approx(94.893)
+    assert leader.best_lap_number == 12
     assert leader.best_lap_overall_fastest is True
     assert leader.number_of_laps == 21
     assert leader.driver is not None
@@ -753,3 +755,300 @@ def test_un_gap_vacio_no_rompe_la_clasificacion_historica():
     assert por_numero["3"].gap_to_leader == "+0.163"
     # Y la mejor vuelta sigue saliendo de /laps.
     assert por_numero["12"].best_lap_time == pytest.approx(94.035)
+
+
+# --------------------------------------------------------------------------- #
+# 13. El tiempo que cuenta para la clasificacion (el del ultimo segmento)
+# --------------------------------------------------------------------------- #
+#
+# En una eliminatoria (Q1/Q2/Q3) el piloto se clasifica con el tiempo del
+# **ultimo segmento alcanzado**, no con el mas rapido de todos. Los eliminados
+# van detras de los que llegaron mas lejos, aunque su tiempo sea mejor: en la
+# clasificacion de Austin 2026, Lindblad (Q3, 1:36.049) quedo P9 por delante de
+# Lawson (Q2, 1:35.058, P10).
+#
+# Ademas, OpenF1 ya no marca las vueltas que la federacion annulo (el campo
+# `deleted` desaparecio de los datos de 2026), asi que tomar la vuelta mas
+# rapida de `/laps` podia devolver un tiempo que no existe en la
+# clasificacion oficial: el 1:34.379 de Norris fue anulado y su tiempo valido
+# de Q3 es 1:35.049.
+
+
+def _historico(session_result, laps):
+    """Provider OpenF1 con las dos consultas que usa la clasificacion."""
+    from providers.openf1 import OpenF1Provider
+
+    provider = OpenF1Provider(base_url="http://127.0.0.1:9")
+
+    async def fake_get(path: str, params=None, *args, **kwargs):
+        if path == "/session_result":
+            return session_result
+        if path == "/laps":
+            return laps
+        if path == "/drivers":
+            return [{"driver_number": 12, "name_acronym": "ANT"}]
+        return []
+
+    provider._get_json = fake_get  # type: ignore[assignment]
+    return provider
+
+
+def test_la_clasificacion_usa_el_tiempo_del_ultimo_segmento():
+    """Con Q1/Q2/Q3 publicados, cuenta el Q3 aunque el Q2 fuera mas rapido.
+
+    Es el caso de Leclerc en Austin 2026: su mejor tiempo fue 1:34.198 en Q2,
+    pero se clasifica con el 1:34.267 de Q3.
+    """
+    import asyncio
+
+    provider = _historico(
+        [
+            {
+                "driver_number": 16,
+                "position": 4,
+                "number_of_laps": 15,
+                "duration": [95.200, 94.198, 94.267],
+                "gap_to_leader": [0.171, 0.0, 0.232],
+            }
+        ],
+        [
+            {
+                "driver_number": 16,
+                "lap_number": 8,
+                "lap_duration": 94.198,
+                "duration_sector_1": 25.253,
+                "duration_sector_2": 37.501,
+                "duration_sector_3": 31.444,
+            },
+            {
+                "driver_number": 16,
+                "lap_number": 14,
+                "lap_duration": 94.267,
+                "duration_sector_1": 25.302,
+                "duration_sector_2": 37.430,
+                "duration_sector_3": 31.535,
+            },
+        ],
+    )
+
+    entradas = asyncio.run(provider.get_timing("11392"))
+    leclerc = entradas[0]
+
+    # El tiempo que cuenta es el del Q3, no el mas rapido de la sesion.
+    assert leclerc.best_lap_time == pytest.approx(94.267)
+    assert leclerc.best_lap_number == 14
+    # Y los sectores son los de esa vuelta (los del Q2 no sirven).
+    assert [s.time for s in leclerc.sectors] == [
+        pytest.approx(25.302),
+        pytest.approx(37.430),
+        pytest.approx(31.535),
+    ]
+    # El gap es el del segmento que cuenta (Q3), no el del Q1.
+    assert leclerc.gap_to_leader == "+0.232"
+    # Los tres tiempos por segmento quedan disponibles para la tabla.
+    assert leclerc.best_lap_times["Q1"] == pytest.approx(95.200)
+    assert leclerc.best_lap_times["Q2"] == pytest.approx(94.198)
+    assert leclerc.best_lap_times["Q3"] == pytest.approx(94.267)
+
+
+def test_el_piloto_eliminado_en_q2_se_clasifica_con_su_q2():
+    """El que no llego a Q3 se clasifica con su tiempo de Q2.
+
+    Es el caso de Lawson en Austin 2026: sin tiempo de Q3, cuenta su Q2
+    (1:35.058), aunque su Q1 fuera mas rapido.
+    """
+    import asyncio
+
+    provider = _historico(
+        [
+            {
+                "driver_number": 30,
+                "position": 10,
+                "number_of_laps": 9,
+                "duration": [95.662, 95.058, None],
+                "gap_to_leader": [0.633, 0.860, None],
+            }
+        ],
+        [
+            {
+                "driver_number": 30,
+                "lap_number": 2,
+                "lap_duration": 95.662,
+                "duration_sector_1": 25.748,
+                "duration_sector_2": 37.866,
+                "duration_sector_3": 32.048,
+            },
+            {
+                "driver_number": 30,
+                "lap_number": 8,
+                "lap_duration": 95.058,
+                "duration_sector_1": 25.551,
+                "duration_sector_2": 37.643,
+                "duration_sector_3": 31.864,
+            },
+        ],
+    )
+
+    entradas = asyncio.run(provider.get_timing("11392"))
+    lawson = entradas[0]
+
+    assert lawson.best_lap_time == pytest.approx(95.058)
+    assert lawson.best_lap_number == 8
+    assert lawson.gap_to_leader == "+0.860"
+    # El segmento Q3 existe pero no tiene tiempo: no se inventa.
+    assert lawson.best_lap_times["Q3"] is None
+
+
+def test_una_vuelta_anulada_no_define_la_mejor_vuelta():
+    """La vuelta anulada por la federacion no aparece en la clasificacion.
+
+    En Austin 2026, `/laps` tiene una vuelta de 1:34.379 de Norris que fue
+    anulada: OpenF1 no la marca (ya no trae el campo `deleted`), asi que tomando
+    la vuelta mas rapida se mostraba un tiempo que no existe. El tiempo
+    oficial de Q3 (1:35.049) es el que manda.
+    """
+    import asyncio
+
+    provider = _historico(
+        [
+            {
+                "driver_number": 1,
+                "position": 8,
+                "number_of_laps": 15,
+                "duration": [95.029, 94.539, 95.049],
+                "gap_to_leader": [0.0, 0.341, 1.014],
+            }
+        ],
+        [
+            {
+                "driver_number": 1,
+                "lap_number": 8,
+                "lap_duration": 94.539,
+                "duration_sector_1": 25.300,
+                "duration_sector_2": 37.575,
+                "duration_sector_3": 31.664,
+            },
+            {
+                "driver_number": 1,
+                "lap_number": 11,
+                "lap_duration": 95.049,
+                "duration_sector_1": 25.266,
+                "duration_sector_2": 37.472,
+                "duration_sector_3": 32.311,
+            },
+            {
+                # La vuelta anulada: es la mas rapida de /laps, pero no cuenta.
+                "driver_number": 1,
+                "lap_number": 14,
+                "lap_duration": 94.379,
+                "duration_sector_1": 25.273,
+                "duration_sector_2": 37.302,
+                "duration_sector_3": 31.804,
+            },
+        ],
+    )
+
+    entradas = asyncio.run(provider.get_timing("11392"))
+    norris = entradas[0]
+
+    assert norris.best_lap_time == pytest.approx(95.049)
+    assert norris.best_lap_number == 11
+    assert [s.time for s in norris.sectors] == [
+        pytest.approx(25.266),
+        pytest.approx(37.472),
+        pytest.approx(32.311),
+    ]
+
+
+def test_una_sesion_normal_no_tiene_segmentos():
+    """En practicas y carreras `duration` es un escalar: no hay segmentos."""
+    import asyncio
+
+    provider = _historico(
+        [
+            {
+                "driver_number": 12,
+                "position": 1,
+                "number_of_laps": 18,
+                "duration": 94.035,
+                "gap_to_leader": 0,
+            }
+        ],
+        [
+            {
+                "driver_number": 12,
+                "lap_number": 14,
+                "lap_duration": 94.035,
+                "duration_sector_1": 25.310,
+                "duration_sector_2": 37.297,
+                "duration_sector_3": 31.428,
+            }
+        ],
+    )
+
+    entradas = asyncio.run(provider.get_timing("11389"))
+    antonelli = entradas[0]
+
+    assert antonelli.best_lap_time == pytest.approx(94.035)
+    assert antonelli.best_lap_number == 14
+    assert antonelli.gap_to_leader == "LEADER"
+    assert antonelli.best_lap_times == {}
+
+
+def test_el_live_toma_el_tiempo_de_clasificacion_del_feed():
+    """El feed publica en `BestLapTime` el tiempo con el que se clasifica.
+
+    Tomar el mas rapido de todos los segmentos daba tiempos que no existen en
+    la clasificacion oficial: el 1:34.198 de Leclerc (Q2) en lugar del
+    1:34.267 con el que se clasifica (Q3).
+    """
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "16": {
+                "RacingNumber": "16",
+                "FullName": "CHARLES LECLERC",
+                "Position": "4",
+                "BestLapTime": {"Value": "1:34.267", "Lap": 8, "_deleted": ["Lap"]},
+                "BestLapTimes": [
+                    {"Value": "1:35.200", "Lap": 2},
+                    {"Value": "1:34.198", "Lap": 8},
+                    {"Value": "1:34.267", "Lap": 8},
+                ],
+            }
+        },
+    )
+
+    assert entry.best_lap_time == pytest.approx(94.267)
+    # El feed marco el numero de vuelta como borrado: no se muestra uno que
+    # no es.
+    assert entry.best_lap_number is None
+
+
+def test_el_live_sin_tiempo_global_cae_en_los_mejores_por_segmento():
+    """Sin `BestLapTime` (knockout en curso) se usa el mejor de los segmentos.
+
+    Durante el Q3 el feed vacia el campo de nivel superior para los pilotos que
+    aun no hicieron su vuelta de Q3: si no se recurriera a los mejores por
+    segmento, aparecerian sin mejor vuelta.
+    """
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "12": {
+                "RacingNumber": "12",
+                "Position": "1",
+                "BestLapTime": {"Value": "", "Lap": 14, "_deleted": ["Lap"]},
+                "BestLapTimes": [
+                    {"Value": "1:35.390", "Lap": 5},
+                    {"Value": "1:34.278", "Lap": 11},
+                    {"Value": ""},
+                ],
+            }
+        },
+    )
+
+    assert entry.best_lap_time == pytest.approx(94.278)
+    assert entry.best_lap_number == 11

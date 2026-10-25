@@ -46,7 +46,11 @@ SNAPSHOT_TTL_SECONDS = 600.0
 # posiciones pasaron a pedirse piloto por piloto y el throttle se arreglo):
 # sin esto, la base seguiria sirviendo el snapshot viejo, con datos
 # incompletos, durante meses.
-SNAPSHOT_VERSION = "v2"
+#
+# v3: la mejor vuelta de la clasificacion sale del tiempo oficial de
+# `/session_result` (el del ultimo segmento alcanzado) y no del minimo de
+# `/laps`, que llegaba a tomar vueltas anuladas por la federacion.
+SNAPSHOT_VERSION = "v3"
 
 
 def _catalog_session_id(meeting_key: int | None) -> str:
