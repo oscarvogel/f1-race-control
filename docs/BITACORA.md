@@ -451,6 +451,7 @@ sistema, no por lectura de código.
 | 43 | Las columnas Q1/Q2/Q3 salían **vacías en vivo** | El feed entrega `BestLapTimes` como **lista** (`[{...}, {...}, {...}]`) y el normalizador solo entendía el mapa por índice (`{"0": ...}`) | `_best_lap_times_items()` soporta las dos formas y respeta la clave del mapa: si falta un segmento, los que quedan no se corren de lugar |
 | 44 | El GAP histórico quedaba en "—" en la clasificación | En una eliminatoria `gap_to_leader` también es una **lista** (una diferencia por segmento) y el código solo leía un escalar | El gap es el del segmento que cuenta, el mismo del tiempo de clasificación |
 | 45 | El panel de Análisis seguía mostrando la vuelta anulada | El análisis guarda los datos crudos de cada sesión en la base con una versión (`v2`) para no volver a descargarlos | Se sube a `v3`: la cache se rehace con la vuelta que cuenta para la clasificación |
+| 46 | En una **carrera**, la mejor vuelta era el tiempo total (107:14.808) | La regla para tomar el tiempo oficial de `/session_result` se aplicaba también cuando `duration` es un **escalar**: en una carrera ese valor es el tiempo TOTAL de la carrera, no una vuelta | El tiempo oficial solo se usa cuando `duration` es una **lista** (que es lo que publica una eliminatoria: Q1/Q2/Q3). En prácticas y carreras se usa la vuelta más rápida registrada |
 ### Entorno
 
 | # | Bug | Cómo se resolvió |
