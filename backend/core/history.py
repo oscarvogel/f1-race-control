@@ -50,7 +50,10 @@ SNAPSHOT_TTL_SECONDS = 600.0
 # v3: la mejor vuelta de la clasificacion sale del tiempo oficial de
 # `/session_result` (el del ultimo segmento alcanzado) y no del minimo de
 # `/laps`, que llegaba a tomar vueltas anuladas por la federacion.
-SNAPSHOT_VERSION = "v3"
+# v4: se descartan tambien las vueltas anuladas por la federacion (que
+# publica el control de carrera) y el tiempo total de una carrera deja de
+# tomarse como si fuera una vuelta.
+SNAPSHOT_VERSION = "v4"
 
 
 def _catalog_session_id(meeting_key: int | None) -> str:

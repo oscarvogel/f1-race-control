@@ -38,7 +38,7 @@ from django.conf import settings
 
 from providers.base import ProviderError, format_lap_time, to_float, to_int
 from providers.jolpica import JolpicaProvider
-from providers.openf1 import OpenF1Provider
+from providers.openf1 import OpenF1Provider, deleted_laps
 
 from .models import Session, SessionSnapshot
 
@@ -65,7 +65,9 @@ DERIVED_PROVIDER = "race-center-analysis"
 #
 # v5: se agrega el control de carrera, que es de donde sale que vueltas
 # anulo la federacion (OpenF1 ya no las marca en /laps).
-CACHE_VERSION = "v5"
+# v6: la mejor vuelta de una carrera ya no toma el tiempo total de la
+# carrera como si fuera una vuelta.
+CACHE_VERSION = "v6"
 
 _RAW_CACHE: dict[str, dict[str, Any]] = {}
 _CHAMPIONSHIP_CACHE: dict[str, dict[str, Any]] = {}
@@ -601,70 +603,6 @@ def build_championship(season: int | None = None) -> dict[str, Any]:
     return stored
 
 
-# --------------------------------------------------------------------------- #
-# Vueltas anuladas por la federacion
-# --------------------------------------------------------------------------- #
-
-# El control de carrera publica las vueltas anuladas asi:
-#   "CAR 1 (NOR) TIME 1:34.379 DELETED - TRACK LIMITS AT TURN 19 LAP 15"
-#   "CAR 5 (BOR) LAP DELETED - TRACK LIMITS AT TURN 11 LAP 9 (PIT)"
-_PATRON_ANULADA = re.compile(
-    r"CAR\s+(?P<numero>\d+)\s+\([A-Z]+\)\s+"
-    r"(?:TIME\s+(?P<tiempo>\d+:\d+(?:\.\d+)?)\s+)?"
-    r"(?:LAP\s+)?DELETED",
-    re.IGNORECASE,
-)
-_PATRON_VUELTA = re.compile(r"\bLAP\s+(?P<vuelta>\d+)\b", re.IGNORECASE)
-
-
-def _a_segundos(texto: str) -> float | None:
-    """"1:34.379" -> 94.379."""
-    try:
-        partes = str(texto).split(":")
-        if len(partes) == 2:
-            return float(partes[0]) * 60 + float(partes[1])
-        return float(partes[0])
-    except (TypeError, ValueError):
-        return None
-
-
-def _vueltas_anuladas(
-    eventos: list[dict[str, Any]],
-) -> tuple[set[tuple[str, int]], set[tuple[str, float]]]:
-    """Las vueltas que la federacion anulo, por piloto.
-
-    OpenF1 ya no marca las vueltas anuladas en ``/laps`` (el campo ``deleted``
-    desaparecio de los datos de 2026), asi que el control de carrera es la
-    unica fuente para saber que vueltas no cuentan. Sin esto, la mejor vuelta
-    de un piloto puede ser un tiempo que no existe en la clasificacion
-    oficial (el 1:34.379 de Norris en la quali de Austin 2026).
-
-    Devuelve dos conjuntos: las vueltas anuladas por numero de vuelta y las
-    vueltas anuladas por tiempo exacto.
-    """
-    por_vuelta: set[tuple[str, int]] = set()
-    por_tiempo: set[tuple[str, float]] = set()
-    for evento in eventos or []:
-        mensaje = str((evento or {}).get("message") or "")
-        if "DELETED" not in mensaje.upper():
-            continue
-        encontrado = _PATRON_ANULADA.search(mensaje)
-        if not encontrado:
-            continue
-        numero = str(encontrado.group("numero"))
-        tiempo = encontrado.group("tiempo")
-        if tiempo:
-            segundos = _a_segundos(tiempo)
-            if segundos is not None:
-                # A milisegundos: los tiempos vienen de dos fuentes distintas
-                # y el flotante los separa (94.379 != 94.37899999999999).
-                por_tiempo.add((numero, round(segundos, 3)))
-        vuelta = _PATRON_VUELTA.search(mensaje)
-        if vuelta:
-            por_vuelta.add((numero, int(vuelta.group("vuelta"))))
-    return por_vuelta, por_tiempo
-
-
 # Una vuelta de boxes (entrada o salida) es mucho mas lenta que una vuelta de
 # carrera. El margen del 15% sale de los datos reales: en Austin 2026 las
 # vueltas de boxes tardan 30 s mas que las de carrera.
@@ -862,7 +800,8 @@ def build_strategy(session_key: str) -> dict[str, Any]:
 
     # Vueltas anuladas por la federacion: no cuentan (no existen en la
     # clasificacion oficial), asi que no se usan para el mejor tiempo.
-    anuladas_vuelta, anuladas_tiempo = _vueltas_anuladas(raw.get("race_control") or [])
+    anuladas_tiempo = deleted_laps(raw.get("race_control") or [])
+    anuladas_vuelta: set[tuple[str, int]] = set()
 
     vueltas_por_piloto: dict[str, list[dict[str, Any]]] = {}
     for vuelta in vueltas:

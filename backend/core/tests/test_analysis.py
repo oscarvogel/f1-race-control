@@ -648,8 +648,15 @@ def test_el_control_de_carrera_que_no_anula_nada_no_cambia_nada(monkeypatch, db)
 
 
 def test_se_leen_las_anulaciones_del_control_de_carrera():
-    """El parser saca piloto, tiempo y vuelta del mensaje del control."""
-    por_vuelta, por_tiempo = analysis_module._vueltas_anuladas(
+    """El parser saca piloto y tiempo del mensaje del control de carrera.
+
+    Se empareja por el **tiempo** y no por el numero de vuelta: el del
+    mensaje es el del feed, que no coincide con el de OpenF1 (para Norris, el
+    feed dice vuelta 15 y OpenF1 dice 14).
+    """
+    from providers.openf1 import deleted_laps
+
+    anuladas = deleted_laps(
         [
             {
                 "message": "CAR 1 (NOR) TIME 1:34.379 DELETED - TRACK LIMITS AT TURN 19 LAP 15 17:01:02"
@@ -662,10 +669,8 @@ def test_se_leen_las_anulaciones_del_control_de_carrera():
         ]
     )
 
-    assert ("1", 15) in por_vuelta
-    assert ("5", 9) in por_vuelta
-    assert ("12", 24) in por_vuelta
-    assert ("1", 94.379) in por_tiempo
-    assert ("12", 103.354) in por_tiempo
-    # El evento que no es de anulacion se ignora.
-    assert len(por_vuelta) == 3
+    assert ("1", 94.379) in anuladas
+    assert ("12", 103.354) in anuladas
+    # La que no trae tiempo no se puede emparejar con una vuelta de /laps: es
+    # una vuelta de boxes, no afecta.
+    assert len(anuladas) == 2

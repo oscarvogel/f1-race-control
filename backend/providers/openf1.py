@@ -25,6 +25,7 @@ Notas de la API que condicionan el codigo:
 from __future__ import annotations
 
 import asyncio
+import re
 import logging
 import time
 from datetime import datetime, timezone
@@ -109,6 +110,57 @@ _cooldown_until = 0.0
 #
 # La fuente del tiempo de clasificacion es, entonces, ``/session_result``.
 LAP_MATCH_TOLERANCE = 0.002
+
+
+# --------------------------------------------------------------------------- #
+# Vueltas anuladas por la federacion
+# --------------------------------------------------------------------------- #
+
+# El control de carrera publica las vueltas anuladas asi:
+#   "CAR 1 (NOR) TIME 1:34.379 DELETED - TRACK LIMITS AT TURN 19 LAP 15"
+#   "CAR 5 (BOR) LAP DELETED - TRACK LIMITS AT TURN 11 LAP 9 (PIT)"
+_PATRON_ANULADA = re.compile(
+    r"CAR\s+(?P<numero>\d+)\s+\([A-Z]+\)\s+"
+    r"(?:TIME\s+(?P<tiempo>\d+:\d+(?:\.\d+)?)\s+)?"
+    r"(?:LAP\s+)?DELETED",
+    re.IGNORECASE,
+)
+
+
+def deleted_laps(
+    eventos: list[dict[str, Any]],
+) -> set[tuple[str, float]]:
+    """Las vueltas anuladas por la federacion, como (piloto, tiempo).
+
+    OpenF1 ya no marca las vueltas anuladas en ``/laps`` (el campo ``deleted``
+    desaparecio de los datos de 2026), asi que el control de carrera es la
+    unica fuente para saber que vueltas no cuentan. Sin esto, la mejor vuelta
+    de un piloto puede ser un tiempo que no existe en la clasificacion
+    oficial (el 1:34.379 de Norris en la quali de Austin 2026).
+
+    Se identifican por su **tiempo exacto**, no por el numero de vuelta: el
+    del mensaje es el del feed, que no coincide con el de OpenF1.
+    """
+    anuladas: set[tuple[str, float]] = set()
+    for evento in eventos or []:
+        mensaje = str((evento or {}).get("message") or "")
+        if "DELETED" not in mensaje.upper():
+            continue
+        encontrado = _PATRON_ANULADA.search(mensaje)
+        if not encontrado:
+            continue
+        tiempo = encontrado.group("tiempo")
+        if not tiempo:
+            # "LAP DELETED ... (PIT)": sin tiempo no se puede emparejar con
+            # la fila de /laps, y es una vuelta de boxes (no afecta).
+            continue
+        try:
+            partes = tiempo.split(":")
+            segundos = round(float(partes[0]) * 60 + float(partes[1]), 3)
+        except (IndexError, ValueError):
+            continue
+        anuladas.add((str(encontrado.group("numero")), segundos))
+    return anuladas
 
 
 def _official_times(row: dict[str, Any]) -> list[float | None]:
@@ -528,20 +580,34 @@ class OpenF1Provider(TimingProvider):
         for lap in laps:
             laps_por_piloto.setdefault(str(lap.get("driver_number")), []).append(lap)
 
+        # Las vueltas anuladas por la federacion no cuentan: el control de
+        # carrera es la unica fuente (OpenF1 ya no las marca en /laps).
+        anuladas: set[tuple[str, float]] = set()
+        try:
+            eventos = await self._get_json("/race_control", {"session_key": key})
+        except ProviderError:
+            eventos = []
+        anuladas = deleted_laps(eventos or [])
+
         # Tiempos oficiales: los publica /session_result y son los que cuentan
         # para la clasificacion (ver la nota de `_official_times`).
         oficiales: dict[str, dict[str, Any]] = {}
         for row in results:
             numero = str(row.get("driver_number"))
             tiempos = _official_times(row)
+            # Solo una eliminatoria publica los tiempos por segmento. En una
+            # carrera `duration` es el TIEMPO TOTAL de la carrera (mas de una
+            # hora) y en unas practicas el tiempo de la sesion: ninguno de los
+            # dos es una vuelta, asi que no se usan como mejor vuelta.
+            eliminatoria = isinstance(row.get("duration"), list)
             oficiales[numero] = {
-                "time": _classification_time(tiempos),
+                "time": _classification_time(tiempos) if eliminatoria else None,
                 "times": tiempos,
                 "gap": _classification_gap(row.get("gap_to_leader")),
                 # Solo una eliminatoria tiene segmentos (Q1/Q2/Q3). En practicas
                 # y carreras `duration` es un escalar y no hay nada que
                 # etiquetar: llamarle "Q1" a la mejor vuelta seria inventar.
-                "knockout": isinstance(row.get("duration"), list),
+                "knockout": eliminatoria,
             }
 
         def elegir_vuelta(numero: str) -> tuple[float | None, int | None, list[float | None]]:
@@ -549,7 +615,8 @@ class OpenF1Provider(TimingProvider):
 
             Primero el tiempo oficial de ``/session_result``; los sectores se
             toman de la vuelta de ``/laps`` que tiene ese tiempo exacto. Si no
-            hay tiempo oficial, se usa la vuelta mas rapida registrada.
+            hay tiempo oficial (practicas o carrera), se usa la vuelta mas
+            rapida registrada, **descartando las que anulo la federacion**.
             """
             filas = laps_por_piloto.get(numero) or []
             oficial = (oficiales.get(numero) or {}).get("time")
@@ -574,7 +641,11 @@ class OpenF1Provider(TimingProvider):
                     ],
                 )
 
-            candidatas = [f for f in filas if to_float(f.get("lap_duration")) is not None]
+            candidatas = [
+                f for f in filas
+                if to_float(f.get("lap_duration")) is not None
+                and (numero, round(to_float(f.get("lap_duration")) or 0.0, 3)) not in anuladas
+            ]
             if not candidatas:
                 return None, None, []
             fila = min(candidatas, key=lambda f: to_float(f.get("lap_duration")))
@@ -969,6 +1040,14 @@ class OpenF1Provider(TimingProvider):
                 continue
             laps_por_piloto.setdefault(numero, []).append(fila)
 
+        # Las vueltas anuladas por la federacion no cuentan.
+        anuladas: set[tuple[str, float]] = set()
+        try:
+            eventos = await self._get_json("/race_control", {"session_key": key})
+        except ProviderError:
+            eventos = []
+        anuladas = deleted_laps(eventos or [])
+
         # Tiempo oficial de clasificacion de cada piloto: el del ultimo
         # segmento alcanzado (ver `_official_times`).
         oficiales: dict[str, float] = {}
@@ -979,6 +1058,10 @@ class OpenF1Provider(TimingProvider):
         for fila in resultados or []:
             numero = str(fila.get("driver_number") or "")
             if not numero:
+                continue
+            # Solo en una eliminatoria el tiempo oficial es el de una vuelta.
+            # En una carrera `duration` es el tiempo total de la carrera.
+            if not isinstance(fila.get("duration"), list):
                 continue
             tiempo = _classification_time(_official_times(fila))
             if tiempo is not None:
@@ -999,7 +1082,11 @@ class OpenF1Provider(TimingProvider):
                     continue
                 mejores[numero] = min(iguales, key=lambda f: to_int(f.get("lap_number")) or 0)
                 continue
-            validas = [f for f in laps if to_float(f.get("lap_duration")) is not None]
+            validas = [
+                f for f in laps
+                if to_float(f.get("lap_duration")) is not None
+                and (numero, round(to_float(f.get("lap_duration")) or 0.0, 3)) not in anuladas
+            ]
             if validas:
                 mejores[numero] = min(validas, key=lambda f: to_float(f.get("lap_duration")))
 
