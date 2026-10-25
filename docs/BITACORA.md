@@ -552,6 +552,14 @@ no es un fallo**.
 - **Mapa del circuito** con la posición real de cada piloto en el replay
   histórico (última posición conocida de cada uno).
 - **Mensaje honesto** en el mapa cuando la fuente no entrega coordenadas.
+- **El acceso al sitio ya no abre el diálogo del navegador**: hay una pantalla
+  de acceso propia (§14) y la API exige sesión válida.
+- **Análisis por sectores y campeonato** construidos y verificados con datos
+  reales (§15).
+- **El volumen persistente sobrevive a los redespliegues** (medido: la segunda
+  consulta de la FP3 sale de la base en 0,07 s).
+- La clasificación final de la quali se vuelve a servir (bug 39) y el mapa
+  del replay dibuja 20 de 22 autos (bug 41).
 
 ### Fuera de alcance (decidido)
 
@@ -679,6 +687,25 @@ exactamente qué campo sobra o falta.
 
 > El repositorio de GitHub es **público**: el código se ve, los datos no
 > (el feed de la F1 no se redistribuye y el sitio está con contraseña).
+
+### El volumen persistente: verificado
+
+La duda era si el SQLite sobrevivía a los redespliegues. Medido sobre el
+sitio desplegado:
+
+| Momento | Petición | Tiempo |
+|---|---|---|
+| Antes del redespliegue | FP3 (11391) | 25,9 s (re-descarga desde OpenF1) |
+| Después del redespliegue | FP3 (11391) | **0,07 s** (sale de la base) |
+
+O sea: el volumen `/data` **sí** sobrevive. La vez que tardó 25,9 s fue la
+primera carga (no había copia todavía).
+
+Además, el snapshot histórico lleva ahora un **control de versión**: si el
+guardado en la base es de otro formato del payload, se vuelve a pedir. Sin
+eso, un snapshot guardado con datos incompletos (por ejemplo, las posiciones
+que quedaron fuera por el límite de tasa de OpenF1) seguía sirviéndose
+durante meses sin avisar.
 
 ### Lo que NO se puede pedir por API
 
