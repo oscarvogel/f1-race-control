@@ -697,3 +697,59 @@ def test_la_mejor_vuelta_toma_el_mas_rapido_de_los_segmentos():
 
     assert entry.best_lap_time == pytest.approx(94.278)
     assert entry.best_lap_number == 11
+
+
+# --------------------------------------------------------------------------- #
+# 12. Gap vacio en el resultado historico (clasificacion de Austin 2026)
+# --------------------------------------------------------------------------- #
+
+
+def test_un_gap_vacio_no_rompe_la_clasificacion_historica():
+    """OpenF1 puede devolver `gap_to_leader` vacio o nulo.
+
+    En la clasificacion de Austin 2026 (session_key 11392) vino vacio para
+    varios pilotos. Con el gap tal cual, el formato `"+%.3f" % None` reventaba
+    con "must be real number, not NoneType" y **todo** el snapshot historico
+    de la sesion se caia (el selector de sesiones mostraba la quali vacia).
+    """
+    import asyncio
+
+    from providers.openf1 import OpenF1Provider
+
+    provider = OpenF1Provider(base_url="http://127.0.0.1:9")
+
+    async def fake_get(path: str, params=None, *args, **kwargs):
+        if path == "/session_result":
+            return [
+                {"driver_number": 12, "position": 1, "gap_to_leader": None, "number_of_laps": 12},
+                {"driver_number": 16, "position": 2, "gap_to_leader": "", "number_of_laps": 11},
+                {"driver_number": 3, "position": 3, "gap_to_leader": 0.163, "number_of_laps": 11},
+            ]
+        if path == "/laps":
+            return [
+                {
+                    "driver_number": 12,
+                    "lap_number": 14,
+                    "lap_duration": 94.035,
+                    "duration_sector_1": 25.310,
+                    "duration_sector_2": 37.297,
+                    "duration_sector_3": 31.428,
+                }
+            ]
+        if path == "/drivers":
+            return [{"driver_number": 12, "name_acronym": "ANT"}]
+        return []
+
+    provider._get_json = fake_get  # type: ignore[assignment]
+
+    entradas = asyncio.run(provider.get_timing("11392"))
+
+    assert len(entradas) == 3
+    por_numero = {e.driver_number: e for e in entradas}
+    # Sin gap no hay texto de gap: no se inventa un 0 ni un "+0.000".
+    assert por_numero["12"].gap_to_leader is None
+    assert por_numero["16"].gap_to_leader is None
+    # El lider con diferencia cero es "LEADER" y el resto trae su diferencia.
+    assert por_numero["3"].gap_to_leader == "+0.163"
+    # Y la mejor vuelta sigue saliendo de /laps.
+    assert por_numero["12"].best_lap_time == pytest.approx(94.035)

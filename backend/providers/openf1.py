@@ -465,7 +465,13 @@ class OpenF1Provider(TimingProvider):
             gap_text = None
             if gap is not None:
                 gap_value = to_float(gap)
-                gap_text = "LEADER" if gap_value == 0 else "+%.3f" % gap_value
+                # Ojo: en la clasificacion de Austin 2026, OpenF1 devolvio
+                # "gap_to_leader" vacio o nulo para varios pilotos. Sin este
+                # chequeo, `"+%.3f" % None` revienta con "must be real number,
+                # not NoneType" y el snapshot historico entero se cae.
+                # Sin dato, no hay gap: queda None (se dibuja "—"), nunca 0.
+                if gap_value is not None:
+                    gap_text = "LEADER" if gap_value == 0 else "+%.3f" % gap_value
 
             entries.append(
                 TimingEntry(

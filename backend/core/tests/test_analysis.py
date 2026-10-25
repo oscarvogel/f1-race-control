@@ -223,7 +223,7 @@ def test_el_campeonato_se_arma_con_los_datos_de_jolpica(monkeypatch, db):
                                 "position": "1",
                                 "points": "340",
                                 "wins": "8",
-                                "Podiums": ["1", "2", "3"],
+                                # El endpoint NO publica los podios.
                                 "Driver": {
                                     "permanentNumber": "12",
                                     "code": "ANT",
@@ -231,13 +231,20 @@ def test_el_campeonato_se_arma_con_los_datos_de_jolpica(monkeypatch, db):
                                     "familyName": "Antonelli",
                                     "nationality": "Italian",
                                 },
-                                "Constructor": {"name": "Mercedes"},
+                                # El equipo viene en "Constructors" (lista), no
+                                # en "Constructor": el actual es el ultimo.
+                                "Constructors": [
+                                    {
+                                        "constructorId": "mercedes",
+                                        "name": "Mercedes",
+                                        "nationality": "German",
+                                    }
+                                ],
                             },
                             {
                                 "position": "2",
                                 "points": "238",
                                 "wins": "3",
-                                "Podiums": ["1", "2"],
                                 "Driver": {
                                     "permanentNumber": "63",
                                     "code": "RUS",
@@ -245,7 +252,13 @@ def test_el_campeonato_se_arma_con_los_datos_de_jolpica(monkeypatch, db):
                                     "familyName": "Russell",
                                     "nationality": "British",
                                 },
-                                "Constructor": {"name": "Mercedes"},
+                                "Constructors": [
+                                    {
+                                        "constructorId": "mercedes",
+                                        "name": "Mercedes",
+                                        "nationality": "German",
+                                    }
+                                ],
                             },
                         ],
                         "ConstructorStandings": [
@@ -275,7 +288,10 @@ def test_el_campeonato_se_arma_con_los_datos_de_jolpica(monkeypatch, db):
     assert resultado["drivers"][0]["code"] == "ANT"
     assert resultado["drivers"][0]["points"] == 340
     assert resultado["drivers"][0]["wins"] == 8
-    assert resultado["drivers"][0]["podiums"] == 3
+    # Los podios no los publica el endpoint: quedan en None (no en 0).
+    assert resultado["drivers"][0]["podiums"] is None
+    # El equipo sale del ultimo de "Constructors".
+    assert resultado["drivers"][0]["team"] == "Mercedes"
     # El rezago con el lider.
     assert resultado["drivers"][0]["gap_to_leader"] == 0
     assert resultado["drivers"][1]["gap_to_leader"] == -102
