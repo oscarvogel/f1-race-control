@@ -9,7 +9,12 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/services/api'
-import type { Championship, SectorAnalysis } from '@/types'
+import type {
+  Championship,
+  PositionHistory,
+  SectorAnalysis,
+  Strategy,
+} from '@/types'
 
 export const useAnalysisStore = defineStore('analysis', () => {
   const payload = ref<SectorAnalysis | null>(null)
@@ -26,6 +31,16 @@ export const useAnalysisStore = defineStore('analysis', () => {
   const championship = ref<Championship | null>(null)
   const championshipLoading = ref(false)
   const championshipError = ref<string | null>(null)
+
+  /** Evolucion de posiciones por vuelta. */
+  const positions = ref<PositionHistory | null>(null)
+  const positionsLoading = ref(false)
+  const positionsError = ref<string | null>(null)
+
+  /** Estrategia de neumaticos. */
+  const strategy = ref<Strategy | null>(null)
+  const strategyLoading = ref(false)
+  const strategyError = ref<string | null>(null)
 
   /** Filas del analisis, ordenadas por tiempo de vuelta (ya llegan asi). */
   const rows = computed(() => payload.value?.rows ?? [])
@@ -80,10 +95,69 @@ export const useAnalysisStore = defineStore('analysis', () => {
     await loadAnalysis(sessionKey.value, { compare: session })
   }
 
-  /** Cambia la sesion analizada. */
+  /**
+   * Cambia la sesion analizada.
+   *
+   * Los tres paneles post-sesion (sectores, evolucion de posiciones y
+   * estrategia) miran la misma sesion: al cambiarla se recargan todos y se
+   * limpian la referencia y la sesion de comparacion, que son de la sesion
+   * anterior.
+   */
   async function setSession(key: string | null): Promise<void> {
     sessionKey.value = key
-    await loadAnalysis(key)
+    referenceDriver.value = null
+    compareSessionKey.value = null
+    await Promise.all([loadAnalysis(key), loadPositions(key), loadStrategy(key)])
+  }
+
+  /** Evolucion de posiciones: la posicion de cada piloto al final de cada vuelta. */
+  async function loadPositions(key: string | null): Promise<void> {
+    if (!key) {
+      positions.value = null
+      positionsError.value = null
+      return
+    }
+    positionsLoading.value = true
+    positionsError.value = null
+    try {
+      const data = await api.positionHistory(key)
+      if (data.found === false) {
+        positions.value = null
+        positionsError.value = data.error ?? data.reason ?? 'No hay datos de posiciones.'
+        return
+      }
+      positions.value = data as PositionHistory
+    } catch (err) {
+      positions.value = null
+      positionsError.value = err instanceof Error ? err.message : String(err)
+    } finally {
+      positionsLoading.value = false
+    }
+  }
+
+  /** Estrategia de neumaticos: stints, paradas y mejor vuelta de cada tramo. */
+  async function loadStrategy(key: string | null): Promise<void> {
+    if (!key) {
+      strategy.value = null
+      strategyError.value = null
+      return
+    }
+    strategyLoading.value = true
+    strategyError.value = null
+    try {
+      const data = await api.strategy(key)
+      if (data.found === false) {
+        strategy.value = null
+        strategyError.value = data.error ?? data.reason ?? 'No hay datos de neumaticos.'
+        return
+      }
+      strategy.value = data as Strategy
+    } catch (err) {
+      strategy.value = null
+      strategyError.value = err instanceof Error ? err.message : String(err)
+    } finally {
+      strategyLoading.value = false
+    }
   }
 
   async function loadChampionship(): Promise<void> {
@@ -116,12 +190,20 @@ export const useAnalysisStore = defineStore('analysis', () => {
     championship,
     championshipLoading,
     championshipError,
+    positions,
+    positionsLoading,
+    positionsError,
+    strategy,
+    strategyLoading,
+    strategyError,
     rows,
     referenceRow,
     loadAnalysis,
     setReference,
     setCompare,
     setSession,
+    loadPositions,
+    loadStrategy,
     loadChampionship,
   }
 })

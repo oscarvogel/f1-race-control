@@ -450,3 +450,87 @@ export interface Championship {
   drivers: DriverStanding[]
   teams: TeamStanding[]
 }
+
+/* ------------------------------------------------------------------------- *
+ * Evolucion de posiciones
+ * ------------------------------------------------------------------------- */
+
+/** La posicion de un piloto al final de una vuelta. */
+export interface PositionPoint {
+  lap: number | null
+  position: number | null
+}
+
+export interface PositionHistoryRow {
+  driver_number: string
+  code: string | null
+  full_name: string | null
+  team: string | null
+  team_colour: string | null
+  /** Posicion con la que termino la sesion. */
+  final_position: number | null
+  /** Cuantas posiciones gano y cuantas perdio a lo largo de la sesion. */
+  positions_gained: number
+  positions_lost: number
+  points: PositionPoint[]
+}
+
+export interface PositionHistory {
+  found: boolean
+  error?: string
+  reason?: string
+  generated_at?: string
+  session_key: string
+  session: AnalysisSession | null
+  source: string
+  rows: PositionHistoryRow[]
+}
+
+/* ------------------------------------------------------------------------- *
+ * Estrategia de neumaticos
+ * ------------------------------------------------------------------------- */
+
+/** Un tramo de vueltas con el mismo compuesto. */
+export interface StrategyStint {
+  stint_number: number | null
+  compound: string | null
+  lap_start: number | null
+  lap_end: number | null
+  /** Vueltas del tramo (incluye la de entrada y la de salida). */
+  laps: number
+  /** Edad del neumatico al empezar el tramo. */
+  tyre_age_at_start: number | null
+  /** La primera vuelta del tramo es la de salida de boxes. */
+  is_out_lap: boolean
+  best_lap_time: number | null
+  best_lap_time_display: string | null
+  best_lap_number: number | null
+}
+
+export interface StrategyRow {
+  driver_number: string
+  code: string | null
+  full_name: string | null
+  team: string | null
+  team_colour: string | null
+  stints: StrategyStint[]
+  stint_count: number
+  /** Cambios de compuesto: en una carrera, las paradas en boxes. */
+  stops: number
+  total_laps: number
+  compounds: (string | null)[]
+  best_lap_time: number | null
+  best_lap_time_display: string | null
+  best_lap_number: number | null
+}
+
+export interface Strategy {
+  found: boolean
+  error?: string
+  reason?: string
+  generated_at?: string
+  session_key: string
+  session: AnalysisSession | null
+  source: string
+  rows: StrategyRow[]
+}

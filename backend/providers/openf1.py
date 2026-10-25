@@ -694,6 +694,54 @@ class OpenF1Provider(TimingProvider):
             for row in rows
         ]
 
+    async def get_position_history(
+        self, session_key: str | int | None = None
+    ) -> list[dict[str, Any]]:
+        """Los cambios de posicion de cada piloto, con su instante.
+
+        OpenF1 publica ``/position``: una fila por **cambio** de posicion, con
+        la fecha en que ocurrio (el instante en que el piloto cruzo la linea).
+        No trae el numero de vuelta, asi que el cruce con ``/laps`` (que si lo
+        trae) es lo que permite decir "llego P3 en la vuelta 12".
+        """
+        key = str(session_key or self._session_key or "")
+        if not key:
+            return []
+        rows = await self._get_json("/position", {"session_key": key})
+        return [
+            {
+                "driver_number": str(row.get("driver_number")),
+                "position": to_int(row.get("position")),
+                "date": row.get("date"),
+            }
+            for row in rows or []
+            if row.get("driver_number") is not None
+        ]
+
+    async def get_raw_laps(
+        self, session_key: str | int | None = None
+    ) -> list[dict[str, Any]]:
+        """Las filas crudas de ``/laps``, con la hora de inicio de cada vuelta.
+
+        Se usan para dos cruces que los datos por piloto no alcanzan:
+        el compuesto de cada vuelta (que en 2026 solo viene de ``/stints``) y
+        el instante en que empieza cada vuelta (para asignarle a la vuelta el
+        cambio de posicion que se publica al cruzarla).
+        """
+        key = str(session_key or self._session_key or "")
+        if not key:
+            return []
+        return list(await self._get_json("/laps", {"session_key": key}) or [])
+
+    async def get_raw_stints(
+        self, session_key: str | int | None = None
+    ) -> list[dict[str, Any]]:
+        """Las filas crudas de ``/stints`` (compuesto, vueltas y edad)."""
+        key = str(session_key or self._session_key or "")
+        if not key:
+            return []
+        return list(await self._get_json("/stints", {"session_key": key}) or [])
+
     async def get_tyres(self, session_key: str | int | None = None) -> list[Stint]:
         return await self.get_stints(session_key)
 
@@ -879,8 +927,16 @@ class OpenF1Provider(TimingProvider):
             )
         return posiciones
 
-    async def get_best_laps(self, session_key: str | int | None = None) -> list[dict[str, Any]]:
+    async def get_best_laps(
+        self,
+        session_key: str | int | None = None,
+        laps_rows: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         """Mejor vuelta de cada piloto, con los tiempos por sector.
+
+        Se puede pasar ``laps_rows`` (las filas crudas de ``/laps``) para no
+        descargarlas dos veces cuando el llamador ya las tiene: OpenF1 limita
+        la tasa a una consulta por segundo.
 
         Es lo que hace posible el **analisis por sectores**: el feed en vivo
         solo publica los sectores de la *ultima* vuelta de cada piloto (y no
@@ -902,7 +958,7 @@ class OpenF1Provider(TimingProvider):
         if not key:
             return []
 
-        filas = await self._get_json("/laps", {"session_key": key})
+        filas = laps_rows if laps_rows is not None else await self._get_json("/laps", {"session_key": key})
         laps_por_piloto: dict[str, list[dict[str, Any]]] = {}
         for fila in filas or []:
             duracion = fila.get("lap_duration")

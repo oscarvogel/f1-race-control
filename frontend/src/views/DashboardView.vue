@@ -12,6 +12,8 @@ import CircuitMap from '@/components/CircuitMap.vue'
 import DiagnosticsPanel from '@/components/DiagnosticsPanel.vue'
 import AnalysisPanel from '@/components/AnalysisPanel.vue'
 import ChampionshipPanel from '@/components/ChampionshipPanel.vue'
+import PositionHistoryChart from '@/components/PositionHistoryChart.vue'
+import StrategyPanel from '@/components/StrategyPanel.vue'
 import { useRaceStore } from '@/stores/race'
 import { usePolling } from '@/composables/usePolling'
 
@@ -103,6 +105,19 @@ onMounted(() => {
           <AnalysisPanel class="h-[520px]" />
         </div>
         <ChampionshipPanel class="h-[520px]" />
+      </div>
+
+      <!--
+        Evolucion de posiciones y estrategia de neumaticos. Los dos leen la
+        misma sesion que el panel de analisis (el store la comparte), asi que
+        comparar la classificacion con lo que hizo cada piloto en la pista es
+        question de mirar el mismo selects.
+      -->
+      <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div class="xl:col-span-2">
+          <PositionHistoryChart class="h-[460px]" />
+        </div>
+        <StrategyPanel class="h-[460px]" />
       </div>
     </main>
 

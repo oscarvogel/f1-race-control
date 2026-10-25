@@ -29,13 +29,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from django.conf import settings
 
-from providers.base import ProviderError, format_lap_time
+from providers.base import ProviderError, format_lap_time, to_float, to_int
 from providers.jolpica import JolpicaProvider
 from providers.openf1 import OpenF1Provider
 
@@ -59,7 +60,12 @@ DERIVED_PROVIDER = "race-center-analysis"
 # v3: la vuelta que se analiza es la que cuenta para la clasificacion (el
 # tiempo del ultimo segmento alcanzado), no la mas rapida registrada. Antes
 # el analisis podia mostrar una vuelta anulada por la federacion.
-CACHE_VERSION = "v3"
+# v4: se agregan las vueltas completas, los stints y los cambios de posicion
+# al payload crudo (para la evolucion de posiciones y la estrategia).
+#
+# v5: se agrega el control de carrera, que es de donde sale que vueltas
+# anulo la federacion (OpenF1 ya no las marca en /laps).
+CACHE_VERSION = "v5"
 
 _RAW_CACHE: dict[str, dict[str, Any]] = {}
 _CHAMPIONSHIP_CACHE: dict[str, dict[str, Any]] = {}
@@ -149,6 +155,10 @@ def _store_raw(session_key: str, payload: dict[str, Any]) -> None:
 async def raw_session(session_key: str) -> dict[str, Any]:
     """Mejor vuelta por piloto (con sectores) y ficha de pilotos de una sesion.
 
+    Ademas trae las vueltas completas, los stints y los cambios de posicion:
+    son los datos que necesitan la evolucion de posiciones y la estrategia de
+    neuumaticos.
+
     Se consulta una sola vez por sesion: el resultado se guarda en memoria y
     en la base, porque una sesion terminada no vuelve a cambiar.
     """
@@ -169,8 +179,17 @@ async def raw_session(session_key: str) -> dict[str, Any]:
         session = await provider.get_session(key)
         if session is None:
             raise ProviderError("No existe la sesion %s en OpenF1." % key)
-        laps = await provider.get_best_laps(key)
+        # Las vueltas crudas se piden una vez y se reusan: la mejor vuelta de
+        # cada piloto sale de ahi, y tambien hacen falta para el cruce con los
+        # stints y con los cambios de posicion.
+        laps_rows = await provider.get_raw_laps(key)
+        laps = await provider.get_best_laps(key, laps_rows=laps_rows)
         drivers = await provider.get_drivers(key)
+        stints = await provider.get_raw_stints(key)
+        positions = await provider.get_position_history(key)
+        # El control de carrera dice que vueltas anulo la federacion: en los
+        # datos de 2026 /laps ya no las marca con `deleted`.
+        race_control = await provider.get_race_control(key)
     finally:
         await provider.disconnect()
 
@@ -191,6 +210,35 @@ async def raw_session(session_key: str) -> dict[str, Any]:
             "end_time_utc": session.end_time_utc.isoformat() if session.end_time_utc else None,
         },
         "laps": laps,
+        "all_laps": [
+            {
+                "driver_number": str(row.get("driver_number")),
+                "lap_number": to_int(row.get("lap_number")),
+                "lap_duration": to_float(row.get("lap_duration")),
+                "date_start": row.get("date_start"),
+                "is_pit_out_lap": row.get("is_pit_out_lap"),
+                "sector_1": to_float(row.get("duration_sector_1")),
+                "sector_2": to_float(row.get("duration_sector_2")),
+                "sector_3": to_float(row.get("duration_sector_3")),
+            }
+            for row in laps_rows
+        ],
+        "stints": [
+            {
+                "driver_number": str(row.get("driver_number")),
+                "stint_number": to_int(row.get("stint_number")),
+                "compound": row.get("compound"),
+                "lap_start": to_int(row.get("lap_start")),
+                "lap_end": to_int(row.get("lap_end")),
+                "tyre_age_at_start": to_int(row.get("tyre_age_at_start")),
+            }
+            for row in stints
+        ],
+        "positions": positions,
+        "race_control": [
+            {"message": str(getattr(evento, "message", "") or "")}
+            for evento in race_control
+        ],
         "drivers": [
             {
                 "driver_number": driver.number,
@@ -551,3 +599,416 @@ def build_championship(season: int | None = None) -> dict[str, Any]:
         "data": stored,
     }
     return stored
+
+
+# --------------------------------------------------------------------------- #
+# Vueltas anuladas por la federacion
+# --------------------------------------------------------------------------- #
+
+# El control de carrera publica las vueltas anuladas asi:
+#   "CAR 1 (NOR) TIME 1:34.379 DELETED - TRACK LIMITS AT TURN 19 LAP 15"
+#   "CAR 5 (BOR) LAP DELETED - TRACK LIMITS AT TURN 11 LAP 9 (PIT)"
+_PATRON_ANULADA = re.compile(
+    r"CAR\s+(?P<numero>\d+)\s+\([A-Z]+\)\s+"
+    r"(?:TIME\s+(?P<tiempo>\d+:\d+(?:\.\d+)?)\s+)?"
+    r"(?:LAP\s+)?DELETED",
+    re.IGNORECASE,
+)
+_PATRON_VUELTA = re.compile(r"\bLAP\s+(?P<vuelta>\d+)\b", re.IGNORECASE)
+
+
+def _a_segundos(texto: str) -> float | None:
+    """"1:34.379" -> 94.379."""
+    try:
+        partes = str(texto).split(":")
+        if len(partes) == 2:
+            return float(partes[0]) * 60 + float(partes[1])
+        return float(partes[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def _vueltas_anuladas(
+    eventos: list[dict[str, Any]],
+) -> tuple[set[tuple[str, int]], set[tuple[str, float]]]:
+    """Las vueltas que la federacion anulo, por piloto.
+
+    OpenF1 ya no marca las vueltas anuladas en ``/laps`` (el campo ``deleted``
+    desaparecio de los datos de 2026), asi que el control de carrera es la
+    unica fuente para saber que vueltas no cuentan. Sin esto, la mejor vuelta
+    de un piloto puede ser un tiempo que no existe en la clasificacion
+    oficial (el 1:34.379 de Norris en la quali de Austin 2026).
+
+    Devuelve dos conjuntos: las vueltas anuladas por numero de vuelta y las
+    vueltas anuladas por tiempo exacto.
+    """
+    por_vuelta: set[tuple[str, int]] = set()
+    por_tiempo: set[tuple[str, float]] = set()
+    for evento in eventos or []:
+        mensaje = str((evento or {}).get("message") or "")
+        if "DELETED" not in mensaje.upper():
+            continue
+        encontrado = _PATRON_ANULADA.search(mensaje)
+        if not encontrado:
+            continue
+        numero = str(encontrado.group("numero"))
+        tiempo = encontrado.group("tiempo")
+        if tiempo:
+            segundos = _a_segundos(tiempo)
+            if segundos is not None:
+                # A milisegundos: los tiempos vienen de dos fuentes distintas
+                # y el flotante los separa (94.379 != 94.37899999999999).
+                por_tiempo.add((numero, round(segundos, 3)))
+        vuelta = _PATRON_VUELTA.search(mensaje)
+        if vuelta:
+            por_vuelta.add((numero, int(vuelta.group("vuelta"))))
+    return por_vuelta, por_tiempo
+
+
+# Una vuelta de boxes (entrada o salida) es mucho mas lenta que una vuelta de
+# carrera. El margen del 15% sale de los datos reales: en Austin 2026 las
+# vueltas de boxes tardan 30 s mas que las de carrera.
+LIMITE_VUELTA_DE_BOXES = 1.15
+
+
+# --------------------------------------------------------------------------- #
+# Evolucion de posiciones por vuelta
+# --------------------------------------------------------------------------- #
+
+# Margen del cruce vuelta/posicion. Medido con los datos reales de Austin
+# 2026: el cambio de posicion se publica en el mismo instante en que arranca
+# la vuelta siguiente, con un desfasase de ~70 ms. El margen de un segundo
+# cubre esa diferencia sin llegar aopsear un cambio ajeno.
+POSITION_CROSS_TOLERANCE_SECONDS = 1.0
+
+
+def _parse_moment(iso: Any) -> datetime | None:
+    """Una fecha ISO de OpenF1 como datetime (o None si no se puede leer)."""
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(str(iso))
+    except ValueError:
+        return None
+
+
+def _driver_meta(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Ficha de pilotos de la sesion, con el color de escuderia del feed."""
+    meta: dict[str, dict[str, Any]] = {}
+    for driver in raw.get("drivers") or []:
+        numero = str(driver.get("driver_number") or "")
+        if numero:
+            meta[numero] = dict(driver)
+    for numero, info in _live_driver_colours().items():
+        entry = meta.setdefault(numero, {})
+        for campo in ("code", "full_name", "team"):
+            if not entry.get(campo) and info.get(campo):
+                entry[campo] = info[campo]
+        if info.get("team_colour"):
+            entry["team_colour"] = info.get("team_colour")
+    return meta
+
+
+def build_position_history(session_key: str) -> dict[str, Any]:
+    """La posicion de cada piloto al final de cada vuelta.
+
+    OpenF1 publica ``/position``: una fila por **cambio** de posicion, con el
+    instante en que ocurrio (el cruce de linea). No trae el numero de vuelta,
+    asi que se cruza con ``/laps``, que si lo trae.
+
+    El cruce es directo porque el cambio de posicion se publica en el mismo
+    instante en que **arranca la vuelta siguiente**: la posicion al final de
+    la vuelta N es el ultimo cambio publicado hasta el comienzo de la vuelta
+    N+1. Medido con los datos reales de Austin 2026, el desfasase entre el
+    cruce de linea y el cambio de posicion es de ~70 ms.
+
+    ``positions_gained`` y ``positions_lost`` se cuentan de una vuelta a otra
+    (que es lo que muestra el grafico): un cambio que ocurre dentro de una
+    vuelta queda reflejado en la posicion de fin de esa vuelta.
+    """
+    raw = asyncio.run(raw_session(session_key))
+    vueltas = list(raw.get("all_laps") or [])
+    cambios = list(raw.get("positions") or [])
+    if not vueltas or not cambios:
+        return {
+            "found": False,
+            "session_key": str(session_key),
+            "reason": "No hay datos de posiciones para la sesion %s." % session_key,
+            "rows": [],
+            "source": settings.HISTORICAL_PROVIDER,
+        }
+
+    meta = _driver_meta(raw)
+
+    cambios_por_piloto: dict[str, list[tuple[datetime, int]]] = {}
+    for cambio in cambios:
+        momento = _parse_moment(cambio.get("date"))
+        posicion = cambio.get("position")
+        if momento is None or posicion is None:
+            continue
+        numero = str(cambio.get("driver_number") or "")
+        if not numero:
+            continue
+        cambios_por_piloto.setdefault(numero, []).append((momento, int(posicion)))
+    for lista in cambios_por_piloto.values():
+        lista.sort(key=lambda item: item[0])
+
+    vueltas_por_piloto: dict[str, list[dict[str, Any]]] = {}
+    for vuelta in vueltas:
+        numero = str(vuelta.get("driver_number") or "")
+        if not numero or vuelta.get("lap_number") is None:
+            continue
+        vueltas_por_piloto.setdefault(numero, []).append(vuelta)
+    for lista in vueltas_por_piloto.values():
+        lista.sort(key=lambda item: item.get("lap_number") or 0)
+
+    filas: list[dict[str, Any]] = []
+    for numero, propias in vueltas_por_piloto.items():
+        propios_cambios = cambios_por_piloto.get(numero) or []
+        if not propios_cambios:
+            continue
+        info = meta.get(numero, {})
+        puntos: list[dict[str, Any]] = []
+        ganadas = 0
+        perdidas = 0
+        anterior: int | None = None
+        for indice, vuelta in enumerate(propias):
+            limite = None
+            if indice + 1 < len(propias):
+                limite = _parse_moment(propias[indice + 1].get("date_start"))
+            posicion: int | None = None
+            for momento, valor in propios_cambios:
+                if limite is None:
+                    # Ultima vuelta: manda el ultimo cambio de la sesion.
+                    posicion = valor
+                    continue
+                if momento <= limite + timedelta(seconds=POSITION_CROSS_TOLERANCE_SECONDS):
+                    posicion = valor
+                else:
+                    break
+            if posicion is not None and anterior is not None:
+                if posicion < anterior:
+                    ganadas += 1
+                elif posicion > anterior:
+                    perdidas += 1
+            if posicion is not None:
+                anterior = posicion
+            puntos.append({"lap": vuelta.get("lap_number"), "position": posicion})
+        filas.append(
+            {
+                "driver_number": numero,
+                "code": info.get("code"),
+                "full_name": info.get("full_name"),
+                "team": info.get("team"),
+                "team_colour": info.get("team_colour"),
+                "final_position": puntos[-1]["position"] if puntos else None,
+                "positions_gained": ganadas,
+                "positions_lost": perdidas,
+                "points": puntos,
+            }
+        )
+
+    filas.sort(key=lambda item: (item.get("final_position") is None, item.get("final_position") or 99))
+
+    return {
+        "found": True,
+        "generated_at": _stamp(),
+        "session_key": str(session_key),
+        "session": raw.get("session"),
+        "source": settings.HISTORICAL_PROVIDER,
+        "rows": filas,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Estrategia de neumaticos
+# --------------------------------------------------------------------------- #
+
+
+def build_strategy(session_key: str) -> dict[str, Any]:
+    """La estrategia de neumaticos de cada piloto: stints, paradas y vueltas.
+
+    Un stint es un tramo de vueltas con el mismo compuesto. De cada stint se
+    dice el compuesto, de que vuelta a que vuelta, cuantas vueltas, la edad del
+    neumatico al empezar y cual fue su mejor vuelta **de carrera**.
+
+    Tres cosas hay que tener en cuenta para que los numeros sean los
+    oficiales:
+
+    * El compuesto sale de ``/stints``: en los datos de 2026 el endpoint de
+      vueltas ya no trae el compuesto ni la edad del neumatico.
+    * Las vueltas anuladas por la federacion (que publica el control de
+      carrera) **no cuentan**. Se detectan por su tiempo exacto: el numero de
+      vuelta del mensaje es el del feed, que no coincide con el de OpenF1.
+    * Dentro de un stint estan la vuelta de salida de boxes (marcada con
+      ``is_pit_out_lap``) y la de vuelta a los boxes. Ninguna de las dos es una
+      vuelta de carrera: son mucho mas lentas que la mejor vuelta del piloto
+      (una vuelta de boxes con el pit lane de Austin son mas de 30 s mas
+      lenta), asi que se dejan afuera al buscar la mejor vuelta del tramo.
+    """
+    raw = asyncio.run(raw_session(session_key))
+    vueltas = list(raw.get("all_laps") or [])
+    stints = list(raw.get("stints") or [])
+    if not stints:
+        return {
+            "found": False,
+            "session_key": str(session_key),
+            "reason": "No hay datos de neumaticos para la sesion %s." % session_key,
+            "rows": [],
+            "source": settings.HISTORICAL_PROVIDER,
+        }
+
+    meta = _driver_meta(raw)
+
+    # Vueltas anuladas por la federacion: no cuentan (no existen en la
+    # clasificacion oficial), asi que no se usan para el mejor tiempo.
+    anuladas_vuelta, anuladas_tiempo = _vueltas_anuladas(raw.get("race_control") or [])
+
+    vueltas_por_piloto: dict[str, list[dict[str, Any]]] = {}
+    for vuelta in vueltas:
+        numero = str(vuelta.get("driver_number") or "")
+        if not numero or vuelta.get("lap_number") is None:
+            continue
+        vueltas_por_piloto.setdefault(numero, []).append(vuelta)
+    for lista in vueltas_por_piloto.values():
+        lista.sort(key=lambda item: item.get("lap_number") or 0)
+
+    stints_por_piloto: dict[str, list[dict[str, Any]]] = {}
+    for stint in stints:
+        numero = str(stint.get("driver_number") or "")
+        if not numero:
+            continue
+        stints_por_piloto.setdefault(numero, []).append(stint)
+    for lista in stints_por_piloto.values():
+        lista.sort(key=lambda item: (item.get("stint_number") or 0, item.get("lap_start") or 0))
+
+    # La mejor vuelta oficial de cada piloto (la que cuenta para la
+    # clasificacion), ya resuelta por el proveedor.
+    oficial_por_piloto = {
+        str(lap.get("driver_number") or ""): lap
+        for lap in (raw.get("laps") or [])
+        if lap.get("driver_number") is not None
+    }
+
+    filas: list[dict[str, Any]] = []
+    for numero, propios in stints_por_piloto.items():
+        info = meta.get(numero, {})
+        propias_vueltas = vueltas_por_piloto.get(numero) or []
+        ultima_vuelta = propias_vueltas[-1].get("lap_number") if propias_vueltas else None
+
+        def _anulada(vuelta: dict[str, Any]) -> bool:
+            """Si esa vuelta la anulo la federacion (no cuenta)."""
+            if (numero, vuelta.get("lap_number")) in anuladas_vuelta:
+                return True
+            # El tiempo llega con dos nombres distintos segun de donde venga la
+            # vuelta: `lap_duration` en las filas crudas y `lap_time` en la
+            # mejor vuelta oficial.
+            tiempo = vuelta.get("lap_duration")
+            if tiempo is None:
+                tiempo = vuelta.get("lap_time")
+            if tiempo is None:
+                return False
+            return (numero, round(float(tiempo), 3)) in anuladas_tiempo
+
+        # La mejor vuelta del piloto: la **oficial de clasificacion** (la del
+        # ultimo segmento alcanzado), no la mas rapida registrada.
+        oficial = oficial_por_piloto.get(numero)
+        referencia: float | None = None
+        if oficial is not None and not _anulada(oficial):
+            referencia = oficial.get("lap_time")
+        if referencia is None:
+            candidatas = [
+                v for v in propias_vueltas
+                if v.get("lap_duration") is not None and not _anulada(v)
+            ]
+            if candidatas:
+                referencia = min(
+                    candidatas, key=lambda v: v["lap_duration"]
+                )["lap_duration"]
+
+        # Una vuelta de boxes (entrada o salida) es mucho mas lenta que una
+        # vuelta de carrera: no cuenta como mejor vuelta del tramo.
+        limite_boxes = referencia * LIMITE_VUELTA_DE_BOXES if referencia else None
+
+        tramos: list[dict[str, Any]] = []
+        for stint in propios:
+            inicio = stint.get("lap_start")
+            fin = stint.get("lap_end")
+            if fin is None:
+                fin = ultima_vuelta
+            del_stint = [
+                vuelta for vuelta in propias_vueltas
+                if vuelta.get("lap_number") is not None
+                and (inicio is None or vuelta["lap_number"] >= inicio)
+                and (fin is None or vuelta["lap_number"] <= fin)
+            ]
+            de_carrera = [
+                vuelta for vuelta in del_stint
+                if vuelta.get("lap_duration") is not None
+                and not _anulada(vuelta)
+                and not vuelta.get("is_pit_out_lap")
+                and (limite_boxes is None or vuelta["lap_duration"] <= limite_boxes)
+            ]
+            mejor = min(de_carrera, key=lambda v: v["lap_duration"]) if de_carrera else None
+            tiempo = mejor.get("lap_duration") if mejor else None
+            tramos.append(
+                {
+                    "stint_number": stint.get("stint_number"),
+                    "compound": stint.get("compound"),
+                    "lap_start": inicio,
+                    "lap_end": stint.get("lap_end"),
+                    "laps": len(del_stint),
+                    "racing_laps": len(de_carrera),
+                    "tyre_age_at_start": stint.get("tyre_age_at_start"),
+                    "is_out_lap": bool(del_stint and del_stint[0].get("is_pit_out_lap")),
+                    "best_lap_time": tiempo,
+                    "best_lap_time_display": format_lap_time(tiempo),
+                    "best_lap_number": mejor.get("lap_number") if mejor else None,
+                }
+            )
+
+        mejor_sesion = oficial if (oficial is not None and not _anulada(oficial)) else None
+        if mejor_sesion is None:
+            candidatas = [
+                v for v in propias_vueltas
+                if v.get("lap_duration") is not None and not _anulada(v)
+            ]
+            if candidatas:
+                mejor_sesion = min(candidatas, key=lambda v: v["lap_duration"])
+        tiempo_sesion = None
+        if mejor_sesion is not None:
+            tiempo_sesion = mejor_sesion.get("lap_time")
+            if tiempo_sesion is None:
+                tiempo_sesion = mejor_sesion.get("lap_duration")
+
+        filas.append(
+            {
+                "driver_number": numero,
+                "code": info.get("code"),
+                "full_name": info.get("full_name"),
+                "team": info.get("team"),
+                "team_colour": info.get("team_colour"),
+                "stints": tramos,
+                "stint_count": len(tramos),
+                # Cambios de compuesto: en una carrera, las paradas en boxes.
+                "stops": max(len(tramos) - 1, 0),
+                "total_laps": len(propias_vueltas),
+                "compounds": [tramo.get("compound") for tramo in tramos],
+                "best_lap_time": tiempo_sesion,
+                "best_lap_time_display": format_lap_time(tiempo_sesion),
+                "best_lap_number": (
+                    mejor_sesion.get("lap_number") if mejor_sesion else None
+                ),
+            }
+        )
+
+    filas.sort(key=lambda item: (item.get("best_lap_time") is None, item.get("best_lap_time") or 0.0))
+
+    return {
+        "found": True,
+        "generated_at": _stamp(),
+        "session_key": str(session_key),
+        "session": raw.get("session"),
+        "source": settings.HISTORICAL_PROVIDER,
+        "rows": filas,
+    }

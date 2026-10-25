@@ -28,6 +28,16 @@ urlpatterns = [
         views.analysis_sectors,
         name="analysis-sectors",
     ),
+    path(
+        "analysis/positions/<str:session_key>/",
+        views.analysis_positions,
+        name="analysis-positions",
+    ),
+    path(
+        "analysis/strategy/<str:session_key>/",
+        views.analysis_strategy,
+        name="analysis-strategy",
+    ),
     path("championship/", views.championship, name="championship"),
     path("sessions/<int:session_id>/snapshot/", views.session_snapshot, name="session-snapshot"),
     path("sessions/<int:session_id>/timing/", views.session_timing, name="session-timing"),

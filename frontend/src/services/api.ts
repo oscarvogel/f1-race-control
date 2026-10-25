@@ -82,6 +82,14 @@ export const api = {
   championship: (season?: number | null, signal?: AbortSignal) =>
     request<any>(season ? `/championship/?season=${season}` : '/championship/', signal),
 
+  /** Evolucion de posiciones: la posicion de cada piloto al final de cada vuelta. */
+  positionHistory: (sessionKey: string, signal?: AbortSignal) =>
+    request<any>(`/analysis/positions/${sessionKey}/`, signal),
+
+  /** Estrategia de neumaticos: stints, paradas y mejor vuelta de cada tramo. */
+  strategy: (sessionKey: string, signal?: AbortSignal) =>
+    request<any>(`/analysis/strategy/${sessionKey}/`, signal),
+
   // -- Sesion del sitio -------------------------------------------------- //
   authSession: (signal?: AbortSignal) => request<any>('/auth/session/', signal),
   login: (username: string, password: string) =>

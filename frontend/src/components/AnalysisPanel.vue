@@ -112,12 +112,30 @@ onMounted(() => {
   }
 })
 
-/** Cuando llega el catalogo de sesiones, se elige la que se esta mirando. */
+/**
+ * Cuando llega el catalogo de sesiones, se elige la que se esta mirando.
+ */
 watch(
   () => store.sessionCatalog.length,
   (total) => {
     if (total > 0 && !sesionElegida.value) {
       sesionElegida.value = sesionDelPanel.value ?? opcionesSesion.value[0]?.value ?? null
+    }
+  },
+)
+
+/**
+ * La sesion es compartida con los otros dos paneles post-sesion (evolucion de
+ * posiciones y estrategia): si se cambia desde alla, este panel tiene que
+ * seguirlo.
+ */
+watch(
+  () => analysis.sessionKey,
+  (valor) => {
+    if (valor && valor !== sesionElegida.value) {
+      sesionElegida.value = valor
+      pilotoElegido.value = null
+      comparacionElegida.value = null
     }
   },
 )

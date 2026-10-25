@@ -702,6 +702,79 @@ def analysis_sectors(request, session_key: str):
 
 
 @require_GET
+def analysis_positions(request, session_key: str):
+    """Evolucion de posiciones: la posicion de cada piloto al final de cada vuelta.
+
+    Fuente OpenF1: ``/position`` (los cambios de posicion, con su instante) y
+    ``/laps`` (a que vuelta pertenece cada cambio).
+    """
+    from providers.base import ProviderError
+
+    from .analysis import build_position_history
+
+    try:
+        payload = build_position_history(str(session_key))
+    except ProviderError as exc:
+        return _json(
+            {
+                "found": False,
+                "session_key": str(session_key),
+                "rows": [],
+                "error": str(exc),
+                "source": settings.HISTORICAL_PROVIDER,
+            }
+        )
+    except Exception as exc:
+        logger.warning("Fallo la evolucion de posiciones de %s: %s", session_key, exc)
+        return _json(
+            {
+                "found": False,
+                "session_key": str(session_key),
+                "rows": [],
+                "error": str(exc),
+                "source": settings.HISTORICAL_PROVIDER,
+            }
+        )
+    return _json(payload)
+
+
+@require_GET
+def analysis_strategy(request, session_key: str):
+    """Estrategia de neumaticos: stints, paradas y mejor vuelta de cada stint.
+
+    Fuente OpenF1: ``/stints`` (compuesto y edad) y ``/laps`` (los tiempos).
+    """
+    from providers.base import ProviderError
+
+    from .analysis import build_strategy
+
+    try:
+        payload = build_strategy(str(session_key))
+    except ProviderError as exc:
+        return _json(
+            {
+                "found": False,
+                "session_key": str(session_key),
+                "rows": [],
+                "error": str(exc),
+                "source": settings.HISTORICAL_PROVIDER,
+            }
+        )
+    except Exception as exc:
+        logger.warning("Fallo la estrategia de %s: %s", session_key, exc)
+        return _json(
+            {
+                "found": False,
+                "session_key": str(session_key),
+                "rows": [],
+                "error": str(exc),
+                "source": settings.HISTORICAL_PROVIDER,
+            }
+        )
+    return _json(payload)
+
+
+@require_GET
 def championship(request):
     """Clasificacion del campeonato de pilotos y de constructores.
 
