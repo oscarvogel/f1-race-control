@@ -908,7 +908,103 @@ coordenadas GPS del histórico (OpenF1 `/location`), no del feed en vivo.
 
 ---
 
-## 17. Cómo seguir
+## 17. Evolucion de posiciones y estrategia de neumaticos
+
+Dos consultas que suman a las que ya habia, pensadas para mirar la carrera
+de hoy (25/10) y no solo la clasificacion.
+
+### 17.1 Evolucion de posiciones: quien paso a quien y cuando
+
+```
+GET /api/analysis/positions/<session_key>/
+```
+
+Cada linea es un piloto y cada punto es **la posicion que tenia al final de
+cada vuelta**.
+
+**Como se arma.** OpenF1 publica `/position`: una fila por *cambio* de
+posicion, con el instante en que ocurrio (el cruce de linea). Pero no trae el
+numero de vuelta, asi que hay que cruzarlo con `/laps`, que si lo trae.
+
+El cruce es directo porque el cambio de posicion se publica **en el mismo
+instante en que arranca la vuelta siguiente**: medido con los datos reales de
+Austin 2026, el desfasase entre el cruce de linea y el cambio de posicion es
+de **~70 ms**. O sea que la posicion al final de la vuelta N es el ultimo
+cambio publicado hasta el comienzo de la vuelta N+1. Se usa un margen de un
+segundo para cubrir ese desfasase y ningun cambio mas.
+
+Las vueltas de boxes (salida y vuelta a los boxes) no se inventan: se toman
+de `/laps`, que trae la hora de inicio de cada vuelta.
+
+En la interfaz (ECharts) las 22 lineas van apagadas y se resalta la del
+piloto que se esta mirando en el panel lateral. Con 22 pilotos, un grafico
+con todas las lineas a la misma intensidad es ilegible.
+
+### 17.2 Estrategia de neumaticos: que compund llevo y cuanto
+
+```
+GET /api/analysis/strategy/<session_key>/
+```
+
+Por piloto: los tramos (stints) de vueltas con el mismo compuesto, de que
+vuelta a que vuelta, cuantas vueltas, la edad del neumatico al empezar el
+tramo y cual fue su mejor vuelta de carrera.
+
+El compuesto sale de `/stints`: en los datos de 2026 el endpoint de vueltas
+ya no trae ni el compuesto ni la edad del neumatico.
+
+### 17.3 Tres cosas que hubo que corregir para que los numeros sean oficiales
+
+**a) Las vueltas anuladas por la federacion no cuentan.** OpenF1 ya no las
+marca en `/laps` (el campo `deleted` desaparecio de los datos de 2026), asi
+que tomar la vuelta mas rapida de `/laps` podia devolver un tiempo que no
+existe en la clasificacion oficial: el 1:34.379 de Norris. La fuente de las
+anulaciones es el **control de carrera**, que las publica asi:
+
+```
+CAR 1 (NOR) TIME 1:34.379 DELETED - TRACK LIMITS AT TURN 19 LAP 15
+CAR 5 (BOR) LAP DELETED - TRACK LIMITS AT TURN 11 LAP 9 (PIT)
+```
+
+Se identifican por su **tiempo exacto**, no por el numero de vuelta: el
+numero del mensaje es el del feed, que no coincide con el de OpenF1 (para
+Norris, el feed dice vuelta 15 y OpenF1 dice 14).
+
+**b) Las vueltas de boxes estan dentro del tramo.** El tramo incluye la
+vuelta de salida de boxes (marcada con `is_pit_out_lap`) y la de vuelta a los
+boxes. Ninguna es una vuelta de carrera: con el pit lane de Austin son mas de
+30 s mas lentas que la mejor vuelta del piloto. Se dejan afuera al buscar la
+mejor vuelta del tramo (margen del 15% sobre la mejor vuelta, medido con los
+datos reales). Cuando al tramo no le queda ninguna vuelta de carrera valida
+(por ejemplo, el ultimo tramo de Verstappen en la quali, cuya unica vuelta
+de carrera fue anulada), se muestra un guion y no un tiempo que no sirve.
+
+**c) La mejor vuelta del piloto es la oficial de clasificacion**, la misma
+que usa la tabla de clasificacion (el tiempo del ultimo segmento alcanzado),
+no la mas rapida registrada.
+
+### 17.4 Los tres paneles post-sesion comparten la sesion
+
+Analisis por sectores, evolucion de posiciones y estrategia de neumaticos
+miran **la misma sesion**: se elige en cualquiera de los dos paneles nuevos y
+se refleja en el de sectores (y al reves). Se eligio una sola sesion
+compartida porque comparar la clasificacion con lo que hizo cada piloto en la
+pista tiene que ser question de mirar el mismo select.
+
+### Endpoints
+
+```
+GET /api/analysis/positions/<session_key>/
+GET /api/analysis/strategy/<session_key>/
+```
+
+Los datos crudos de la sesion (vueltas completas, stints, cambios de posicion
+y control de carrera) se cachean en memoria y en la base, con la version
+`v5` de la cache.
+
+---
+
+## 18. Cómo seguir
 
 ```bash
 cd /mnt/c/Programacion/proyectos/actives/f1-race-center

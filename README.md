@@ -28,6 +28,11 @@ suscripciones ni planes de usuario.
 - **Panel de análisis**: la mejor vuelta de cada piloto con sus tres sectores,
   el Δ contra el más rápido y el Δ sector por sector contra el piloto que se
   elija; además, el Δ de la vuelta contra otra sesión (por ejemplo, FP3).
+- **Panel de evolución de posiciones**: un gráfico con la posición que tenía
+  cada piloto al final de cada vuelta (quién pasó a quién y en qué vuelta).
+- **Panel de estrategia de neumáticos**: los tramos de vueltas de cada piloto,
+  con el compuesto, cuántas vueltas, la edad del neumático y su mejor vuelta
+  de carrera en cada tramo.
 - **Panel de campeonato**: la tabla de pilotos y de constructores de la
   temporada, con puntos, victorias y rezago, indicando en qué ronda está.
 - Panel de diagnóstico con el estado real de cada proveedor: conexión,
