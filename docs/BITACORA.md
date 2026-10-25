@@ -888,6 +888,11 @@ mostrando el tiempo con el que se clasifica, sino el más rápido de la sesión
 
 Corregido, reconstruido el snapshot (`v3`) y vuelto a cuadrar: **22/22**.
 
+En producción, tras el despliegue: snapshot `v3`, 22 pilotos, **22/22** con el
+tiempo de clasificación y el gap de la fuente oficial, y el panel de Análisis
+con la vuelta correcta (Leclerc 1:34.267 v14, Norris 1:35.049 v11, Lindblad
+1:36.049 v14, Lawson 1:35.058 v8).
+
 > Confirmación del propio feed: el control de carrera de la sesión registra
 > `CAR 1 (NOR) TIME 1:34.379 DELETED - TRACK LIMITS AT TURN 19 LAP 15`, o sea
 > que la vuelta que tomaba `/laps` como "mejor vuelta" fue anulada por la
