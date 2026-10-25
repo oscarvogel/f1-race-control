@@ -237,6 +237,47 @@ están marcados con `[Race Center patch]` / `[Race Center addition]`.
 
 **La lógica de cronometraje del upstream no se tocó.**
 
+### 6.1 Ampliación del 25/10/2026: coordenadas y telemetría reales
+
+Después de los parches iniciales, al ver la carrera en vivo se comprobó que
+**los canales de coordenadas nunca iban a llegar**, y el motivo no era el
+codigo sino el feed:
+
+1. **Los canales se llaman `Position.z` y `CarData.z`** (con el sufijo `.z`),
+   no `Positions` y `CarData`. Suscribirse a los nombres sin sufijo no
+   entrega absolutely nada: es la misma lista de canales que usa FastF1.
+   Verificado con sondas contra el feed durante el GP de Estados Unidos 2026.
+2. **El feed exige autenticacion para esos canales**: a una conexion anonima
+   responden `401`, y lo mismo los archivos estaticos
+   (`/static/{Path}/Position.z.jsonStream`). El cronometraje normal sigue
+   llegando sin credenciales; las coordenadas y la telemetria por auto no.
+   FastF1 lo resuelve iniciando sesion en la cuenta de formula1.com
+   (OAuth2 Authorization-Code + PKCE contra `account.formula1.com`) y mandando
+   el token de suscripcion F1TV como `Authorization: Bearer`.
+
+Por eso el parche ahora incluye:
+
+- `src/f1-auth.js` (nuevo): el inicio de sesion completo, con la
+  configuracion publica del cliente leida del frontend de F1, el challenge
+  PKCE S256 y el canje del codigo por el token. Lee `F1_USERNAME` y
+  `F1_PASSWORD` del entorno; **nunca** escribe las credenciales en disco, en
+  el codigo o en el repositorio.
+- `src/f1-client.js`: suscripcion a `CarData.z` y `Position.z`, cabecera
+  `Authorization` en el handshake, decodificacion de los payloads comprimidos
+  (base64 + deflate sin cabecera) y sondeo de los archivos estaticos del feed
+  con peticion por rango (el archivo lleva todo el historico: se pide solo el
+  final).
+- `src/utils/merge.js`: el `deepMerge` ahora normaliza la doble forma del
+  feed (array en el snapshot, objeto indexado en los deltas). Antes una delta
+  vaciaba los stints y con ellos el compuesto del neumático.
+- `src/routes/car-data.js`: acepta el dorsal en `Number`, `CarNumber` o
+  `RacingNumber`, segun el canal.
+
+La limitacion que queda y **no es del codigo**: sin una cuenta de formula1.com
+con suscripcion F1TV activa, el login puede funcionar pero el feed sigue
+devolviendo `401` a los canales de coordenadas. El mapa queda vacio y el
+panel lo dice.
+
 ---
 
 ## 7. Limitación de tasa de OpenF1 (corregido 24/10/2026)
@@ -523,20 +564,38 @@ no es un fallo**.
    que muestre los gaps, los neumaticos y las vueltas en vivo, y que la forma
    de `Stats` en carrera sea la que espera el proveedor (seccion 18).
 
+4. **Confirmar que OpenF1 vuelve a responder solo al terminar la carrera.**
+   Durante una sesion en vivo OpenF1 devuelve **401 en todo**, historico
+   incluido (`"Live F1 session in progress. Global API access (including past
+   sessions) is restricted to authenticated users until the session ends"`).
+   No hace falta clave para el historico: se recupera al terminar la sesion.
+   Mientras dura la carrera, el historico de la app queda sin respuesta y el
+   catalogo se resuelve con Jolpica (metadatos), que sigue funcionando.
+
 ### Prioridad media
 
-4. Ampliar el mapa de coordenadas de `backend/core/weather.py` al resto de
+5. Ampliar el mapa de coordenadas de `backend/core/weather.py` al resto de
    circuitos de la temporada. Hoy solo esta Austin (circuit_key 9); para
    cualquier otro trazado **no hay prevision**, a proposito.
-5. Medir el tamaño del snapshot histórico completo: `location` son 403.062
+6. Medir el tamaño del snapshot histórico completo: `location` son 403.062
    muestras GPS. Se resolvió guardando **una fila por piloto** (la última),
    pero queda medir el tiempo de descarga del endpoint completo.
-6. Documentar en `docs/providers.md` la Incorporación de una API nueva como
+7. Documentar en `docs/providers.md` la Incorporación de una API nueva como
    guía práctica (ya está el esqueleto del adaptador).
-7. **Rotar los secretos que quedaron a la vista**: el token de la API de
+8. **Rotar los secretos que quedaron a la vista**: el token de la API de
    Coolify y la contraseña del sitio se imprimieron en el chat durante el
    despliegue. El token se regenera en Coolify; la contraseña se cambia en las
    variables de entorno de la aplicación.
+9. **Limpiar el vite fantasma del 5173** (resto de una corrida anterior de este
+   mismo proyecto) y decidir si el 5173 vuelve a quedar libre. `stop-dev.sh`
+   ahora lo puede bajar por puerto, pero solo cuando el `.env` apunte a ese
+   puerto.
+10. **Aclarar el proceso de ingesta de `supervisord`**: en el WSL hay un
+    `manage.py ingest_live` corriendo como `root` bajo `supervisord` que
+    **no escribe en esta base** (una sola ingesta cada 3 s en
+    `core_ingestionrun`). Si es de otra copia del proyecto, conviene
+    documentarlo o apagarlo; si es de esta, hay que dejar de arrancar el
+    proceso propio de ingesta.
 
 ### Resuelto en esta sesion
 
@@ -1130,3 +1189,98 @@ tail -f .run/logs/live-evidence.log
 
 Ver el detalle del diagnóstico del canal y del límite de tasa de OpenF1 en
 `docs/live-diagnostics.md`.
+
+---
+
+## 20. Arranque en vivo del GP de Austin (25/10/2026, sesion 11396)
+
+El pedido fue "levantar el servidor para ver como funciona" con la carrera a
+punto de largarse. Al empezar, el stack **ya estaba levantado** (lo habia
+dejado una sesion anterior), asi que la primera tarea fue verificar que lo que
+estaba en pie era lo correcto y no solo "responde".
+
+### Estado verificado con `scripts/doctor.sh`
+
+| Servicio | PID | Puerto | Estado |
+|---|---|---|---|
+| live-timing (Node) | 44005 | 3000 | `CONNECTED`, ultimo mensaje hace 3 s |
+| ingesta (Django) | 146146 | — | `LIVE`, 22 pilotos, cambio por ciclo de 3 s |
+| API (Django) | 146147 | 8000 | `ok`, `data_state: LIVE` |
+| frontend (Vite) | 30879 | 5174 | responde 200 |
+
+Sesion detectada: **United States Grand Prix**, Austin, ronda 18, tipo `Race`,
+ID real `11396`, estado `LIVE`, 22 entradas, 50 eventos de control de carrera.
+
+### Bugs encontrados y como se resolvieron
+
+| # | Bug | Por que pasaba | Como se resolvio |
+|---|---|---|---|
+| 51 | `start-dev.sh` dejaba el **PID del frontend muerto** en `.run/pids/frontend.pid` | `npm run dev` deja a vite como proceso hijo: el PID guardado era el de npm, que ademas **muere** cuando vite no puede tomar el puerto ("Port 5174 is already in use"). `doctor.sh` reportaba "pid registrado pero muerto" y `stop-dev.sh` **nunca paraba el frontend** | Se invoca vite de forma directa (`node node_modules/vite/bin/vite.js`), asi el PID guardado es el del servidor real. Ademas, si el proceso muere en los primeros 2 s, se borra el pidfile y se imprime el error del log |
+| 52 | `start-dev.sh` era **poco idempotente**: arrancaba un segundo servicio sobre un puerto ya servido | No miraba quien tenia el puerto; se acumulaban procesos | Se agrego `port_pid` / `own_port_pid`: si el puerto ya lo tiene un proceso **de este proyecto**, se adopta su PID; si lo tiene **otro proyecto**, se avisa `[CONFLICTO]` y **no se toca** el proceso ajeno |
+| 53 | `stop-dev.sh` no detenia procesos residuales | El `pkill` por ruta no alcanza a los procesos con cmdline relativo (`node src/server.js`), y los PID registrados ya no existian | Se localizan por puerto y solo se detienen si el proceso **pertenece al proyecto** (cmdline o cwd dentro de `$PROJ`) |
+| 54 | `doctor.sh` reportaba **OpenF1 401 como FALLO** | Con una sesion en vivo, OpenF1 bloquea todo el acceso (incluido el historico) hasta que la sesion termine: `{"detail":"Live F1 session in progress. Global API access (including past sessions) is restricted to authenticated users until the session ends."}` | Se distingue ese 401 del 401 por credencial invalida: ahora sale como AVISO y explica que se recupera solo al terminar la carrera |
+| 55 | El README decia que el puerto 5173 lo ocupaba **otro proyecto** | En realidad lo ocupaba un **vite fantasma de este mismo proyecto**, de una corrida anterior (el `wslrelay.exe` de Windows solo reenvia al WSL) | Verificado con `netstat`: el unico listener en Windows es `wslrelay.exe` |
+
+### Lo que NO era un bug (verificado contra el feed)
+
+- **La columna de pneumatico vacia** no era un fallo del codigo: el feed
+  publica los compuestos **cuando los autos llegan a la grilla**, no antes. A las
+  16:56 ART la columna seguia en `—`; a las 16:57 ya mostraba S/H/M para los 22
+  pilotos, y el panel del piloto "NEUMATICO: MEDIUM". El backend ya lo tenia
+  resuelto (`_stint_list` normaliza el `Stints` del feed, que es un
+  **diccionario** y no una lista) y el frontend tiene el segundo reintento por
+  `compoundByDriver`.
+- **La grilla antes de la largada**: el orden de la tabla es el `GridPos` real
+  del feed (Norris `GridPos: 8` aparece 8º) y las "vueltas" son las de la
+  clasificacion. Es exactamente lo que muestra la pantalla oficial de la F1
+  antes de la largada.
+- El `v11` / `v8` al lado de la mejor vuelta **no es un codigo de neumático**:
+  es el numero de vuelta (`v{{ best_lap_number }}`).
+
+### El mapa sin autos
+
+El feed **no publica** los canales `Positions` ni `CarData` antes de la
+largada: `/api/positions` y `/api/car-data` devuelven `{"Cars": []}` aunque el
+proveedor este suscrito a ambos canales (parche local, §6). Queda **pendiente
+de confirmar en carrera** si los autos aparecen en el mapa (seccion 12,
+prioridad alta). La ruta de codigo esta escrita y probada.
+
+### Entorno
+
+- Hay un **segundo proceso de ingesta** en el WSL que corre como `root` bajo
+  `supervisord` (`/usr/local/bin/python manage.py ingest_live`). **No escribe en
+  esta base**: la tabla `core_ingestionrun` muestra exactamente **una** ingesta
+  cada 3 s, que es la del proceso del proyecto. No se toco.
+- `OPENF1_API_KEY` esta vacia en el `.env`: durante la sesion en vivo no
+  importa (OpenF1 bloquea igual), y al terminar la carrera el historico vuelve a
+  funcionar sin clave.
+- La app quedo accesible en **http://127.0.0.1:5174** (el 5173 es el vite
+  fantasma; el de este proyecto es el 5174).
+
+### La carrera en vivo: tres bugs mas, encontrados con la carrera corriendo
+
+Con la carrera ya largada (vuelta 3) se pudo probar el sistema de verdad, y
+aparecieron tres problemas que la clasificacion no habia destapado.
+
+| # | Bug | Por que pasaba | Como se resolvio |
+|---|---|---|---|
+| 56 | **La columna de pneumatico se vaciaba en carrera** | El feed manda la misma coleccion de dos formas: el snapshot inicial trae `Stints` como **array** (`[{...}]`) y los deltas como **objeto indexado** (`{"1": {...}}`). El `deepMerge` del proveedor reemplazaba los arrays en bloque, asi que un delta con un solo stint **borrava la lista entera**, y con ella el `Compound` | `deepMerge` normaliza las dos formas cuando el destino y el origen difieren: se mezclan por posicion en vez de reemplazarse, y se conserva la forma original del destino. Con 5 pruebas (`array + objeto`, `objeto + array`, stint nuevo, array contra array, objetos anidados) |
+| 57 | **El mapa nunca iba a tener autos**: los canales de coordenadas no son `CarData` y `Positions` | El feed publica las coordenadas en los canales **comprimidos**: `Position.z` y `CarData.z` (los mismos nombres que usa FastF1). Suscribirse a `CarData` / `Positions` no entrega **nada**. Ademas, esos canales y los archivos estaticos del feed responden **401 a una conexion anonima**: hacen falta las credenciales de una cuenta de formula1.com | Se suscriben a `CarData.z` y `Position.z`, se anade el inicio de sesion OAuth2 + PKCE contra `account.formula1.com` (mismo flujo que FastF1), el token viaja como `Bearer` y se sondean los archivos estaticos `Position.z.jsonStream` / `CarData.z.jsonStream` como respaldo. Las credenciales se leen de `F1_USERNAME` / `F1_PASSWORD` en el `.env` |
+| 58 | **El panel de telemetria pedia siempre el historico a OpenF1** | `session_telemetry` tenia el proveedor OpenF1 escrito a mano: en carrera OpenF1 responde 401 y el panel salia vacio | Ahora, si la sesion esta en vivo, se consulta primero al proveedor live y solo se cae a OpenF1 si no hay telemetria |
+| 59 | **Todos los chequeos HTTP daban `000`** (servicio y proveedores externos) al leer el `.env` | El `.env` se habia reescrito con finales **CRLF**: el `\r` quedaba pegado al final de cada valor y las URLs salian como `http://127.0.0.1:3000\r/api/status`, que curl no puede pedir. El sintoma era muy engañoso: parecia un problema de red | El `.env` vuelve a LF y, sobre todo, `read_env` de `start-dev.sh`, `doctor.sh` y `stop-dev.sh` ahora hace `tr -d '\r'`: un `.env` editado en Windows ya no puede romper las URLs |
+
+Ademas, el mensaje del mapa ("En la carrera si llegan") era **falso**: decia
+que las coordenadas llegarian en carrera cuando la causa real es la
+autenticacion. Ahora el panel explica lo que de verdad falta.
+
+### Lo que quedo verificado y lo que quedo pendiente
+
+- **Verificado en carrera**: clasificacion en vivo con posiciones, gaps por
+  vuelta, mejores vueltas de carrera, sectores, pneumatico y edad de pneumatico
+  (incluida la parada de Verstappen: `S v2`), eventos de control de carrera
+  (banderas amarillas, overtake disabled) y estado de pista.
+- **Pendiente**: el mapa con los autos y el panel de telemetria por auto
+  dependen de las credenciales de la cuenta de F1. Sin una cuenta con
+  suscripcion F1TV activa el login puede funcionar, pero el feed sigue
+  entregando **401** a los canales de coordenadas: el limite es del feed, no
+  del codigo.

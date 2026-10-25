@@ -364,14 +364,47 @@ def session_race_control(request, session_id: int):
 
 @require_GET
 def session_telemetry(request, session_id: int):
-    """Telemetria historica.
+    """Telemetria de la sesion.
 
     Nunca se envia como parte del snapshot principal: es voluminosa. Si el
     proveedor activo no ofrece telemetria, se responde con el motivo.
+
+    En una sesion **en vivo** la telemetria viene del proveedor live (canal
+    `CarData.z` del feed de cronometraje, que exige una cuenta de F1
+    autenticada). Para una sesion ya terminada se sigue leyendo de OpenF1,
+    que es el unico que conserva el historico.
     """
     session = _get_session_or_404(session_id)
     snapshot = snapshot_for_session(session_id) or {}
     sources = snapshot.get("sources") or {}
+
+    import asyncio
+
+    from .ingest import build_manager
+
+    # Sesion en vivo: primero el proveedor live.
+    manager = build_manager()
+    scope = "live" if (sources.get("timing") == "free_livetiming") else "historical"
+    if scope == "live":
+        try:
+            samples = asyncio.run(manager.get_telemetry(scope="live"))
+        except Exception:
+            samples = []
+        if samples:
+            limit = min(int(request.GET.get("limit", 1000)), 20000)
+            driver_filter = request.GET.get("driver")
+            if driver_filter:
+                samples = [s for s in samples if s.driver_number == driver_filter]
+            return _json(
+                {
+                    "session_id": session.id,
+                    "found": True,
+                    "count": len(samples[:limit]),
+                    "results": [sample.as_dict() for sample in samples[:limit]],
+                    "source": "free_livetiming",
+                    "note": "Telemetria en vivo del feed de cronometraje.",
+                }
+            )
 
     from providers.openf1 import OpenF1Provider
 
@@ -380,7 +413,6 @@ def session_telemetry(request, session_id: int):
         api_key=settings.OPENF1_API_KEY,
         live_enabled=settings.OPENF1_LIVE_ENABLED,
     )
-    import asyncio
 
     try:
         samples = asyncio.run(provider.get_telemetry(session.provider_session_id))

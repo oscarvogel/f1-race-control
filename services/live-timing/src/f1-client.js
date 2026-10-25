@@ -1,11 +1,14 @@
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const { deepMerge } = require('./utils/merge');
+const { getSubscriptionToken } = require('./f1-auth');
 
 const F1_ORIGIN_URL = 'https://www.formula1.com';
 const F1_HTTP_URL = 'https://livetiming.formula1.com/signalrcore';
 const F1_WS_URL = 'wss://livetiming.formula1.com/signalrcore';
+const F1_STATIC_BASE = 'https://livetiming.formula1.com/static';
 
 const NEGOTIATE_VERSION = '1';
 const RECORD_SEP = '\x1e';
@@ -15,6 +18,36 @@ const MSG_INVOCATION = 1;
 const MSG_COMPLETION = 3;
 
 const HANDSHAKE_MESSAGE = `{"protocol":"json","version":1}${RECORD_SEP}`;
+
+/**
+ * [Race Center addition] Decodifica el payload de un canal.
+ *
+ * Los canales `.z` (los que traen coordenadas y telemetria) llegan
+ * comprimidos: base64 con deflate sin cabecera. El feed los manda como
+ * cadena, a veces dentro de un JSON string, asi que un `JSON.parse` a pelo
+ * no alcanza: hay que intentar tambien la descompresion.
+ *
+ * @param {string|Object} dataStr
+ * @returns {Object|null} el payload ya decodificado, o null si no se pudo.
+ */
+function decodificarPayload(dataStr) {
+    if (dataStr && typeof dataStr === 'object') return dataStr;
+
+    let texto = typeof dataStr === 'string' ? dataStr : '';
+    try {
+        const parseado = JSON.parse(texto);
+        if (parseado && typeof parseado === 'object') return parseado;
+        if (typeof parseado === 'string') texto = parseado;
+    } catch (err) {
+        // No era JSON: se intenta la descompresion de abajo.
+    }
+    try {
+        const inflado = zlib.inflateRawSync(Buffer.from(texto, 'base64')).toString('utf8');
+        return JSON.parse(inflado);
+    } catch (err) {
+        return null;
+    }
+}
 
 const SUBSCRIBE_CHANNELS = [
     'TimingData',
@@ -31,6 +64,13 @@ const SUBSCRIBE_CHANNELS = [
     // [Race Center addition] Positions carries the per-car X/Y/Z coordinates on
     // track. `CarData` only carries the telemetry (speed, rpm, gear...).
     'Positions',
+    // [Race Center addition] The channels that actually carry the coordinates and
+    // the telemetry are the compressed variants, with the `.z` suffix. Verified
+    // against the live feed during the 2026 United States Grand Prix: subscribing
+    // to 'CarData' / 'Positions' delivers NOTHING, while 'CarData.z' /
+    // 'Position.z' are the names the feed publishes (the same list FastF1 uses).
+    'CarData.z',
+    'Position.z',
     // [Race Center addition] TrackStatus carries the track flags and safety car state.
     'TrackStatus'
 ];
@@ -61,6 +101,11 @@ class F1LiveClient {
         this.trackStatus = {};
 
         this.watchdogTimer = null;
+        // [Race Center addition] Cookie de CORS y token de la cuenta de F1:
+        // hacen falta para leer los archivos estaticos del feed.
+        this.awsAlbCors = '';
+        this.subscriptionToken = null;
+        this.staticTimer = null;
     }
 
     /**
@@ -98,6 +143,8 @@ class F1LiveClient {
             const rawCookie = preNegResp.headers.get('set-cookie') || '';
             const awsMatch = rawCookie.match(/AWSALBCORS=([^;]+)/);
             const awsAlbCors = awsMatch ? awsMatch[1] : '';
+            // [Race Center addition] Se guarda para leer los archivos estaticos.
+            this.awsAlbCors = awsAlbCors;
 
             const negotiateHeaders = {
                 'User-Agent': 'BestHTTP',
@@ -122,6 +169,17 @@ class F1LiveClient {
                 Origin: F1_ORIGIN_URL
             };
             if (awsAlbCors) wsHeaders['Cookie'] = `AWSALBCORS=${awsAlbCors}`;
+
+            // [Race Center addition] Las coordenadas y la telemetria por auto
+            // exigen un token de la cuenta de F1: sin el, el feed responde 401
+            // a esos canales y el mapa se queda vacio. El resto del
+            // cronometraje sigue llegando sin autenticacion.
+            const subscriptionToken = await getSubscriptionToken();
+            if (subscriptionToken) {
+                wsHeaders['Authorization'] = `Bearer ${subscriptionToken}`;
+                // [Race Center addition] Se guarda para leer los archivos estaticos.
+                this.subscriptionToken = subscriptionToken;
+            }
 
             console.log('[F1Client] Connecting to F1 SignalR Core WebSocket...');
             this.ws = new WebSocket(wsUrl, { headers: wsHeaders });
@@ -192,6 +250,10 @@ class F1LiveClient {
                         }
 
                         this.sendSubscribe();
+                        // [Race Center addition] Los archivos estaticos del feed son
+                        // la via que usa FastF1 para la telemetria: se sondean en
+                        // paralelo a los canales de SignalR.
+                        this.startStaticPolling();
                         return;
                     }
 
@@ -252,8 +314,78 @@ class F1LiveClient {
         if (result.TeamRadio) this.routeData('TeamRadio', result.TeamRadio);
         // [Race Center addition] Initial snapshot may already contain car positions.
         if (result.CarData) this.routeData('CarData', result.CarData);
+        // [Race Center addition] The compressed variants carry the live
+        // coordinates and telemetry.
+        if (result['CarData.z']) this.routeData('CarData.z', result['CarData.z']);
+        if (result['Position.z']) this.routeData('Position.z', result['Position.z']);
         // [Race Center addition] Track status may arrive in the initial snapshot.
         if (result.TrackStatus) this.routeData('TrackStatus', result.TrackStatus);
+    }
+
+    /**
+     * [Race Center addition] Sondeo de los archivos estaticos del feed.
+     *
+     * El feed publica, para cada sesion, dos archivos que se van escribiendo
+     * en vivo:
+     *
+     *   /static/{Path}/Position.z.jsonStream   coordenadas X/Y/Z de cada auto
+     *   /static/{Path}/CarData.z.jsonStream     telemetria (velocidad, rpm...)
+     *
+     * Cada linea es `HH:MM:SS:mmm` seguido del payload comprimido (base64 con
+     * deflate sin cabecera). El archivo **contiene todo el historico** de la
+     * sesion, asi que se pide solo el final con una peticion por rango: del
+     * ultimo registro sale el estado actual de cada auto.
+     *
+     * Sin token de la cuenta de F1 estos archivos responden 401 y no hay nada
+     * que leer: en ese caso el sondeo no se arranca.
+     *
+     * @returns {void}
+     */
+    startStaticPolling() {
+        if (this.staticTimer) return;
+        if (!this.subscriptionToken) return;
+        this.staticTimer = setInterval(() => {
+            this.pollStaticFiles().catch(() => { /* se reintenta al siguiente ciclo */ });
+        }, 3000);
+        this.pollStaticFiles().catch(() => { /* se reintenta al siguiente ciclo */ });
+    }
+
+    /**
+     * [Race Center addition] Lee el ultimo registro de los archivos estaticos.
+     *
+     * @returns {Promise<void>}
+     */
+    async pollStaticFiles() {
+        const sessionPath = this.session && this.session.Path;
+        if (!sessionPath || !this.subscriptionToken) return;
+
+        const headers = {
+            'User-Agent': 'BestHTTP',
+            Origin: F1_ORIGIN_URL,
+            Authorization: `Bearer ${this.subscriptionToken}`,
+            // Solo el final del archivo: el historico completo pesa mucho.
+            Range: 'bytes=-262144'
+        };
+        if (this.awsAlbCors) headers.Cookie = `AWSALBCORS=${this.awsAlbCors}`;
+
+        for (const [archivo, canal] of [
+            ['Position.z.jsonStream', 'Position.z'],
+            ['CarData.z.jsonStream', 'CarData.z']
+        ]) {
+            try {
+                const resp = await fetch(`${F1_STATIC_BASE}/${sessionPath}${archivo}`, { headers });
+                if (!resp.ok) continue;
+                const texto = await resp.text();
+                const registros = texto.split('\r\n').filter((r) => r.length > 12);
+                if (!registros.length) continue;
+                const ultimo = registros[registros.length - 1];
+                // El timestamp ocupa los primeros 12 caracteres.
+                const data = decodificarPayload(ultimo.slice(12));
+                if (data) this.routeData(canal, data);
+            } catch (err) {
+                // Sin internet momentaneo o respuesta rara: se sigue.
+            }
+        }
     }
 
     /**
@@ -264,7 +396,8 @@ class F1LiveClient {
      */
     routeData(channel, dataStr) {
         if (!dataStr) return;
-        const data = typeof dataStr === 'string' ? JSON.parse(dataStr) : dataStr;
+        const data = decodificarPayload(dataStr);
+        if (!data) return;
 
         switch (channel) {
             case 'DriverList':
@@ -300,12 +433,14 @@ class F1LiveClient {
                 }
                 break;
             case 'CarData':
+            case 'CarData.z':
                 // [Race Center addition] The Entries array is replaced wholesale by the merge
                 // engine, which is exactly what we want: the latest state of every car.
                 deepMerge(this.carData, data);
                 this.broadcast({ type: 'CarData', data: this.carData });
                 break;
             case 'Positions':
+            case 'Position.z':
                 // [Race Center addition] Track coordinates (X/Y/Z) of every car.
                 // This is the channel that actually carries the positions:
                 // `CarData` only carries the telemetry.

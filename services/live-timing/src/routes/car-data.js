@@ -13,6 +13,22 @@
 const express = require('express');
 
 /**
+ * Numero de dorsal de una entrada del feed.
+ *
+ * [Race Center addition] Segun el canal, el dorsal viene en `Number`
+ * (CarData), en `CarNumber` o en `RacingNumber` (Position). Se aceptan los
+ * tres: si se descarta la entrada por un nombre de campo distinto, el mapa
+ * se queda vacio sin avisar.
+ *
+ * @param {Object} entry
+ * @returns {string}
+ */
+function numeroDe(entry) {
+    const valor = entry.Number ?? entry.CarNumber ?? entry.RacingNumber;
+    return valor === undefined || valor === null ? '' : String(valor);
+}
+
+/**
  * Creates the CarData Express router.
  * @param {F1LiveClient} f1Client - Active instance of F1LiveClient.
  * @returns {express.Router} Express router instance.
@@ -30,9 +46,9 @@ function createCarDataRouter(f1Client) {
             const entries = carData.Entries || [];
 
             const cars = (Array.isArray(entries) ? entries : Object.values(entries))
-                .filter((entry) => entry && entry.Number !== undefined)
+                .filter((entry) => entry && numeroDe(entry) !== '')
                 .map((entry) => ({
-                    RacingNumber: String(entry.Number),
+                    RacingNumber: numeroDe(entry),
                     X: entry.X ?? null,
                     Y: entry.Y ?? null,
                     Z: entry.Z ?? null,
@@ -110,9 +126,9 @@ function createPositionsRouter(f1Client) {
             const entries = positions.Entries || [];
 
             const cars = (Array.isArray(entries) ? entries : Object.values(entries))
-                .filter((entry) => entry && (entry.Number !== undefined || entry.CarNumber !== undefined))
+                .filter((entry) => entry && numeroDe(entry) !== '')
                 .map((entry) => ({
-                    RacingNumber: String(entry.Number ?? entry.CarNumber ?? ''),
+                    RacingNumber: numeroDe(entry),
                     X: entry.X ?? null,
                     Y: entry.Y ?? null,
                     Z: entry.Z ?? null,
