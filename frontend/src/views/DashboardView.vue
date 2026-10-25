@@ -4,6 +4,7 @@ import { AlertCircle, RefreshCw } from '@lucide/vue'
 import AppHeader from '@/components/AppHeader.vue'
 import ClassificationTable from '@/components/ClassificationTable.vue'
 import DriverPanel from '@/components/DriverPanel.vue'
+import FollowedDriversBar from '@/components/FollowedDriversBar.vue'
 import RaceControlPanel from '@/components/RaceControlPanel.vue'
 import TyresPanel from '@/components/TyresPanel.vue'
 import WeatherPanel from '@/components/WeatherPanel.vue'
@@ -60,7 +61,15 @@ onMounted(() => {
       </div>
     </div>
 
-    <main class="mx-auto w-full max-w-[1800px] flex-1 px-4 py-4 lg:px-6">
+    <!--
+        El dock de pilotos seguidos va fijo abajo: cuando esta visible tapa la
+        parte baja de la pagina, asi que el contenido principal deja un hueco
+        abajo para que el ultimo panel no quede debajo.
+    -->
+    <main
+      class="mx-auto w-full max-w-[1800px] flex-1 px-4 py-4 lg:px-6"
+      :class="store.followedDrivers.length ? 'pb-[220px]' : ''"
+    >
       <!--
         El circuito va en la columna derecha, pegado a la clasificacion en
         vivo: antes estaba al final de la pagina, abajo y perdido, y no se
@@ -126,6 +135,7 @@ onMounted(() => {
       <span class="text-slate-500">{{ store.liveProvider ?? 'sin proveedor' }}</span>
     </footer>
 
+    <FollowedDriversBar />
     <DiagnosticsPanel />
   </div>
 </template>

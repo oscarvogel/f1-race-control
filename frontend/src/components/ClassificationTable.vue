@@ -1,11 +1,40 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { ChevronDown, ChevronUp, Clock } from '@lucide/vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { ChevronDown, ChevronUp, Clock, Star } from '@lucide/vue'
 import { useClock } from '@/composables/useClock'
-import { useRaceStore, type SortKey } from '@/stores/race'
+import { MAX_FOLLOWED_DRIVERS, useRaceStore, type SortKey } from '@/stores/race'
 import type { TimingEntry } from '@/types'
 
 const store = useRaceStore()
+
+/**
+ * Aviso efimero cuando no se puede seguir a un cuarto piloto.
+ *
+ * El tope de tres cupos no puede fallar en silencio: si el usuario aprieta
+ * la estrella y no pasa nada, parece que la app esta rota.
+ */
+const aviso = ref<string | null>(null)
+let temporizador: number | null = null
+
+function mostrarAviso(texto: string) {
+  aviso.value = texto
+  if (temporizador !== null) window.clearTimeout(temporizador)
+  temporizador = window.setTimeout(() => {
+    aviso.value = null
+  }, 3200)
+}
+
+onBeforeUnmount(() => {
+  if (temporizador !== null) window.clearTimeout(temporizador)
+})
+
+/** Agrega o quita un piloto de los seguidos. */
+function seguir(numero: string) {
+  const resultado = store.toggleFollow(numero)
+  if (resultado === 'limit') {
+    mostrarAviso(`Ya seguís a ${MAX_FOLLOWED_DRIVERS} pilotos: sacá uno antes de agregar otro.`)
+  }
+}
 
 /** Reloj compartido: la cuenta regresiva no puede ir por detras de la cabecera. */
 const now = useClock()
@@ -234,14 +263,28 @@ function sortIcon(key: SortKey) {
           {{ countdownLabel }} {{ sessionCountdown }}
         </span>
         <span class="chip">{{ sorted.length }} pilotos</span>
+        <span
+          v-if="store.followedDrivers.length"
+          class="chip num border-accent/40 text-accent"
+          :title="`Pilotos que se siguen en el dock inferior (${MAX_FOLLOWED_DRIVERS} cupos)`"
+        >
+          {{ store.followedDrivers.length }}/{{ MAX_FOLLOWED_DRIVERS }} seguidos
+        </span>
         <span v-if="store.dataState === 'HISTORICAL'" class="chip text-sky-300">
           Sesion finalizada
         </span>
       </span>
     </header>
 
+    <div
+      v-if="aviso"
+      class="border-b border-warn/30 bg-warn/10 px-4 py-1.5 text-[11px] text-warn"
+    >
+      {{ aviso }}
+    </div>
+
     <div class="min-h-0 flex-1 overflow-auto">
-      <table class="w-full min-w-[860px] border-collapse">
+      <table class="w-full min-w-[900px] border-collapse">
         <thead class="sticky top-0 z-10 bg-race-900/95 backdrop-blur">
           <tr class="border-b border-race-750/70">
             <th class="th w-12 cursor-pointer select-none" @click="headerClick('position')">
@@ -278,6 +321,12 @@ function sortIcon(key: SortKey) {
             <th class="th w-24 cursor-pointer select-none" @click="headerClick('gap')">GAP</th>
             <th class="th w-16 cursor-pointer select-none" @click="headerClick('laps')">VUELTAS</th>
             <th class="th w-24 cursor-pointer select-none" @click="headerClick('tyre')">NEUMATICO</th>
+            <th
+              class="th sticky right-0 z-20 w-14 border-l border-race-800/70 bg-race-900/95 text-center backdrop-blur"
+              title="Pilotos que se siguen en el dock inferior"
+            >
+              SEGUIR
+            </th>
           </tr>
         </thead>
 
@@ -442,10 +491,33 @@ function sortIcon(key: SortKey) {
                 </span>
               </div>
             </td>
+
+            <td class="td sticky right-0 z-10 border-l border-race-800/70 bg-race-900 text-center">
+              <button
+                type="button"
+                class="rounded p-1 transition-colors"
+                :class="
+                  store.isFollowing(entry.driver_number)
+                    ? 'text-accent'
+                    : 'text-slate-700 hover:text-slate-300'
+                "
+                :title="
+                  store.isFollowing(entry.driver_number)
+                    ? 'Dejar de seguir a este piloto'
+                    : 'Seguir a este piloto en el dock inferior'
+                "
+                @click.stop="seguir(entry.driver_number)"
+              >
+                <Star
+                  class="h-4 w-4"
+                  :fill="store.isFollowing(entry.driver_number) ? 'currentColor' : 'none'"
+                />
+              </button>
+            </td>
           </tr>
 
           <tr v-if="sorted.length === 0">
-            <td :colspan="showQualifyingColumns ? 10 : 7" class="px-4 py-10 text-center">
+            <td :colspan="showQualifyingColumns ? 11 : 8" class="px-4 py-10 text-center">
               <p class="text-sm text-slate-500">
                 Sin datos de clasificacion disponibles.
               </p>

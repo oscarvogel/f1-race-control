@@ -25,12 +25,18 @@ const props = withDefaults(
     allowEmpty?: boolean
     emptyLabel?: string
     disabled?: boolean
+    /**
+     * Direccion del desplegable. `up` es para los combos pegados al borde
+     * inferior de la pantalla: hacia abajo la lista se iria del viewport.
+     */
+    direction?: 'down' | 'up'
   }>(),
   {
     placeholder: 'Buscar...',
     allowEmpty: false,
     emptyLabel: 'Ninguno',
     disabled: false,
+    direction: 'down',
   },
 )
 
@@ -163,7 +169,8 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickFuera))
 
     <ul
       v-if="abierto && filtradas.length"
-      class="absolute z-40 mt-1 max-h-64 w-full overflow-auto rounded-md border border-race-700 bg-race-900/95 py-1 shadow-xl backdrop-blur"
+      class="absolute z-40 max-h-64 w-full overflow-auto rounded-md border border-race-700 bg-race-900/95 py-1 shadow-xl backdrop-blur"
+      :class="direction === 'up' ? 'bottom-full mb-1' : 'mt-1'"
     >
       <li
         v-for="(option, index) in filtradas"
@@ -178,7 +185,11 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickFuera))
       </li>
     </ul>
 
-    <p v-else-if="abierto && !filtradas.length" class="mt-1 text-[11px] text-slate-500">
+    <p
+      v-else-if="abierto && !filtradas.length"
+      class="text-[11px] text-slate-500"
+      :class="direction === 'up' ? 'mb-1' : 'mt-1'"
+    >
       Sin coincidencias.
     </p>
   </div>

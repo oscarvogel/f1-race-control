@@ -35,6 +35,10 @@ suscripciones ni planes de usuario.
   de carrera en cada tramo.
 - **Panel de campeonato**: la tabla de pilotos y de constructores de la
   temporada, con puntos, victorias y rezago, indicando en qué ronda está.
+- **Seguimiento de hasta tres pilotos**: un dock fijo abajo con los datos en
+  vivo de los pilotos que elijas (posición, mejor vuelta, última vuelta, gap,
+  intervalo, vueltas y neumático con su edad), y un modal con el detalle y la
+  comparación entre los tres. La elección se recuerda entre recargas.
 - Panel de diagnóstico con el estado real de cada proveedor: conexión,
   latencia, edad del último dato, último error y reconexiones.
 - Vista del circuito con la posición de cada auto, sobre el trazado real

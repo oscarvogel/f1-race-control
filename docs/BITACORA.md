@@ -519,23 +519,24 @@ no es un fallo**.
    sesión de clasificación se puede ver "en crudo" (dónde terminó cada uno)
    o con una línea de tiempo que mueva los autos. Hoy es la primera.
 
+3. **Verificar el dock de pilotos seguidos en carrera** (25/10, 17:00 ART):
+   que muestre los gaps, los neumaticos y las vueltas en vivo, y que la forma
+   de `Stats` en carrera sea la que espera el proveedor (seccion 18).
+
 ### Prioridad media
 
-3. Ampliar el mapa de coordenadas de `backend/core/weather.py` al resto de
+4. Ampliar el mapa de coordenadas de `backend/core/weather.py` al resto de
    circuitos de la temporada. Hoy solo esta Austin (circuit_key 9); para
    cualquier otro trazado **no hay prevision**, a proposito.
-4. Medir el tamaño del snapshot histórico completo: `location` son 403.062
+5. Medir el tamaño del snapshot histórico completo: `location` son 403.062
    muestras GPS. Se resolvió guardando **una fila por piloto** (la última),
    pero queda medir el tiempo de descarga del endpoint completo.
-5. Documentar en `docs/providers.md` la Incorporación de una API nueva como
+6. Documentar en `docs/providers.md` la Incorporación de una API nueva como
    guía práctica (ya está el esqueleto del adaptador).
-6. **Rotar los secretos que quedaron a la vista**: el token de la API de
+7. **Rotar los secretos que quedaron a la vista**: el token de la API de
    Coolify y la contraseña del sitio se imprimieron en el chat durante el
    despliegue. El token se regenera en Coolify; la contraseña se cambia en las
    variables de entorno de la aplicación.
-7. **Evolución de posiciones por vuelta**: OpenF1 tiene `/position` (70 filas
-   en la quali de Austin), con lo que se puede ver el cambio de posición de
-   cada piloto vuelta a vuelta. Queda fuera de esta entrega.
 
 ### Resuelto en esta sesion
 
@@ -565,6 +566,11 @@ no es un fallo**.
   consulta de la FP3 sale de la base en 0,07 s).
 - La clasificación final de la quali se vuelve a servir (bug 39) y el mapa
   del replay dibuja 20 de 22 autos (bug 41).
+- **Evolución de posiciones por vuelta** y **estrategia de neumaticos**,
+  construidos y verificados con datos reales (§17).
+- **Seguimiento de hasta tres pilotos en vivo** (dock fijo + modal con
+  comparacion), verificado en el navegador con los datos de la quali
+  (§18).
 
 ### Fuera de alcance (decidido)
 
@@ -1005,7 +1011,96 @@ y control de carrera) se cachean en memoria y en la base, con la version
 
 ---
 
-## 18. Cómo seguir
+## 18. Seguimiento de pilotos en vivo (dock inferior + modal)
+
+### Que se pidio y que se construyo
+
+"Seguir a dos o tres pilotos como maximo y ver sus datos en tiempo real: mejor
+vuelta, ultima vuelta, neumaticos, posicion, etc."
+
+Se implementaron las dos opciones que se mencionaban, porque no compiten:
+
+- **Dock fijo abajo**: la tira permanente con hasta tres pilotos y sus datos
+  en vivo. Es lo que se mira durante la carrera sin tapar el resto del panel.
+- **Modal de detalle**: al apretar "Detalle" en una tarjeta, la ventana con
+  todo el dato del piloto y la **comparacion entre los tres** (delta de mejor
+  vuelta contra el mas rapido del grupo, vueltas de diferencia, gap).
+
+El dock va primero porque un modal esconde el resto del dashboard: si la
+funcion es "seguir la carrera", el seguimiento tiene que estar siempre a la
+vista.
+
+### Como se elige a los pilotos
+
+Dos caminos, los dos sobre el mismo dato real:
+
+1. La **columna SEGUIR** de la clasificacion: una estrella por fila. A 1366 la
+   columna queda **fija a la derecha** (`sticky`), porque la tabla se scrollea
+   en horizontal y si no la estrella quedaba fuera de pantalla.
+2. El **combo de busqueda** del dock ("Seguir a un piloto..."), con
+   autocomplete y sin valores arbitrarios.
+
+El tope es de **tres**: al intentar seguir a un cuarto, la tabla avisa "Ya
+seguis a 3 pilotos: sacá uno antes de agregar otro". No falla en silencio.
+
+La seleccion se guarda en el navegador (`localStorage`): sobrevive a una
+recarga y a un cambio de sesion.
+
+### Que muestra cada tarjeta
+
+Posicion, nombre, equipo y color de escuderia; mejor vuelta (con el numero de
+vuelta cuando el feed lo da), ultima vuelta, gap con el lider, intervalo con
+el auto de adelante, vueltas completadas y el neumatico vigente con su edad;
+los tres sectores (con el color de mejor personal y de mejor absoluto) y los
+avisos de estado (en boxes, salida de boxes, parado, DNF).
+
+La edad del neumatico y el compuesto salen del feed en vivo; en el historico
+se resuelven desde los stints de la sesion, como ya hacia la clasificacion.
+
+**Nada se inventa**: si un dato no existe, se muestra "-". En una sesion ya
+terminada el feed deja el ultimo estado de cada auto (por ejemplo, "en boxes"
+para los 22 pilotos), asi que los avisos de boxes, salida y parado **solo se
+muestran con la sesion en curso**.
+
+### El modal
+
+Datos completos del piloto (sectores, paradas, velocidad si el feed publica
+telemetria) y la comparacion con los otros pilotos seguidos. El delta de mejor
+vuelta se calcula contra el mas rapido del grupo.
+
+### Bugs encontrados al construirlo
+
+| # | Bug | Causa | Como se resolvio |
+|---|-----|-------|------------------|
+| 47 | El modal se dibujaba **adentro** del dock, no sobre la pagina | El dock tiene `backdrop-blur` y eso lo convierte en bloque contenedor de los descendientes `position: fixed` | El modal se monta con `<Teleport to="body">` |
+| 48 | El desplegable del combo se iba del viewport | El combo del dock esta en el borde inferior de la pantalla y la lista se abre hacia abajo | `SearchSelect` acepta `direction="up"` |
+| 49 | El dock tapaba media clasificacion (254 px de alto) | Los datos en dos filas de tres, mas un contador de paradas | Una sola fila de seis campos compactos (194 px) y el contador de paradas al modal |
+| 50 | La estrella quedaba fuera de pantalla a 1366 | La tabla se scrollea en horizontal | Columna SEGUIR fija a la derecha |
+| 51 | En carrera, el gap podia ser de una vuelta vieja | `Stats` (historico por vuelta) pisaba al gap del momento del nivel superior | El nivel superior manda y `Stats` se usa solo si no hay nada arriba. Ademas `_clean_gap` aprende a leer un gap que viene como objeto (`{"Value": "+1.234"}`) |
+
+El bug 51 no se pudo verificar con datos de carrera porque la carrera todavia no
+corria: **los 22 pilotos de la quali traen el gap solo en `Stats`** (el nivel
+superior viene vacio), asi que el cambio es neutro para lo ya verificado
+(22/22 contra el resultado oficial) y protege el caso carrera.
+
+### Verificacion
+
+- **127 tests del backend en verde** (3 nuevos sobre la prioridad del gap).
+- `npm run build:strict` (vue-tsc + vite) sin errores.
+- En el navegador, a 1638x969 y a 1366x768: se eligieron tres pilotos desde la
+  clasificacion, el dock aparece con los datos reales de la quali (1:34.035 de
+  Antonelli, 1:34.214 de Verstappen), el modal compara los tres con su delta,
+  el cuarto piloto es rechazado con aviso y la seleccion sobrevive a la recarga.
+
+### Pendiente
+
+- **Verificar en carrera** (25/10, 17:00 ART / 15:00 del circuito): que el
+  dock muestre gaps, neumaticos y vueltas en vivo, y que la forma de `Stats`
+  en carrera sea la que espera el proveedor.
+
+---
+
+## 19. Cómo seguir
 
 ```bash
 cd /mnt/c/Programacion/proyectos/actives/f1-race-center

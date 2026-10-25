@@ -373,6 +373,13 @@ class FreeLiveTimingProvider(TimingProvider):
         # el gap mas reciente que publico F1 para ese piloto. El indice del
         # segmento del que viene el gap se expone aparte para poder etiquetar
         # la columna (Q1/Q2/Q3) y no mezclar gaps de segmentos distintos.
+        # `Stats` guarda el historico del gap: por segmento (Q1/Q2/Q3) en la
+        # eliminatoria y por vuelta en la carrera. De ahi se toma el **ultimo**
+        # segmento con dato, que es el mas reciente.
+        stats_fastest: str | None = None
+        stats_fastest_segment: str | None = None
+        stats_ahead: str | None = None
+        stats_ahead_segment: str | None = None
         for segment, stats_entry in self._stats_entries(line.get("Stats")):
             fastest = self._clean_gap(stats_entry.get("TimeDiffToFastest"))
             ahead = self._clean_gap(
@@ -380,11 +387,22 @@ class FreeLiveTimingProvider(TimingProvider):
                 or stats_entry.get("TimeDiffToPositionAhead")
             )
             if fastest:
-                time_diff_fastest = fastest
-                fastest_segment = segment
+                stats_fastest = fastest
+                stats_fastest_segment = segment
             if ahead:
-                time_diff_ahead = ahead
-                ahead_segment = segment
+                stats_ahead = ahead
+                stats_ahead_segment = segment
+
+        # El nivel superior manda: es el gap del momento. Si `Stats` lo pisara,
+        # en carrera se terminaria mostrando el gap de una vuelta vieja.
+        # En la eliminatoria el nivel superior viene vacio (se verifico con los
+        # 22 pilotos de Austin 2026) y el gap sale de `Stats`, como antes.
+        if not time_diff_fastest and stats_fastest:
+            time_diff_fastest = stats_fastest
+            fastest_segment = stats_fastest_segment
+        if not time_diff_ahead and stats_ahead:
+            time_diff_ahead = stats_ahead
+            ahead_segment = stats_ahead_segment
 
         compound, tyre_age, tyre_new, grid_pos = self._tyre_from_app(app_line, line)
 
@@ -472,6 +490,12 @@ class FreeLiveTimingProvider(TimingProvider):
         """Normaliza un gap. Vacio significa "no hay dato", no un gap de 0."""
         if raw is None:
             return None
+        if isinstance(raw, dict):
+            # En carrera el feed manda el gap como objeto: {"Value": "+1.234"}.
+            # Sin esto, `str(raw)` devolvia el diccionario entero como gap.
+            raw = raw.get("Value")
+            if raw is None:
+                return None
         text = str(raw).strip()
         if text in ("", "+0.000", "0.000", "-"):
             return None if text in ("", "-") else text

@@ -1052,3 +1052,90 @@ def test_el_live_sin_tiempo_global_cae_en_los_mejores_por_segmento():
 
     assert entry.best_lap_time == pytest.approx(94.278)
     assert entry.best_lap_number == 11
+
+
+# --------------------------------------------------------------------------- #
+# 14. Gap del momento: el nivel superior manda sobre el historico de `Stats`
+# --------------------------------------------------------------------------- #
+
+
+def test_el_gap_del_nivel_superior_manda_sobre_stats():
+    """En carrera el feed publica el gap del momento arriba de `Stats`.
+
+    `Stats` guarda el historico (por vuelta). Si `Stats` pisara al nivel
+    superior, el dock mostraria el gap de una vuelta vieja.
+    """
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "44": {
+                "RacingNumber": "44",
+                "Position": "2",
+                "GapToLeader": "+12.345",
+                "IntervalToPositionAhead": "+0.678",
+                "TimeDiffToFastest": "+12.345",
+                "TimeDiffToPositionAhead": "+0.678",
+                "Stats": {
+                    "0": {"TimeDiffToFastest": "+9.999",
+                          "TimeDifftoPositionAhead": "+9.999"},
+                },
+            }
+        },
+    )
+
+    assert entry.gap_to_leader == "+12.345"
+    assert entry.interval_to_ahead == "+0.678"
+    assert entry.time_diff_to_fastest == "+12.345"
+    assert entry.time_diff_to_position_ahead == "+0.678"
+
+
+def test_un_gap_que_viene_como_objeto_se_lee_como_texto():
+    """En carrera el gap llega como `{"Value": "+1.234"}`, no como texto."""
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "44": {
+                "RacingNumber": "44",
+                "Position": "2",
+                "GapToLeader": {"Value": "+1.234"},
+                "IntervalToPositionAhead": {"Value": "+0.567"},
+                "TimeDiffToFastest": {"Value": "+1.234"},
+            }
+        },
+    )
+
+    assert entry.gap_to_leader == "+1.234"
+    assert entry.interval_to_ahead == "+0.567"
+    assert entry.time_diff_to_fastest == "+1.234"
+
+
+def test_sin_gap_en_el_nivel_superior_se_usa_el_ultimo_segmento():
+    """En eliminatoria el nivel superior viene vacio: manda `Stats`.
+
+    Es el caso verificado contra el resultado oficial de Austin 2026 (los 22
+    pilotos sacan su gap de `Stats`, ninguno del nivel superior).
+    """
+    provider = _provider()
+    entry = _timing_entry(
+        provider,
+        {
+            "44": {
+                "RacingNumber": "44",
+                "Position": "2",
+                "TimeDiffToFastest": "",
+                "TimeDiffToPositionAhead": "",
+                "Stats": [
+                    {"TimeDiffToFastest": "+0.015",
+                     "TimeDifftoPositionAhead": "+0.015"},
+                    {"TimeDiffToFastest": "+0.086",
+                     "TimeDifftoPositionAhead": "+0.071"},
+                ],
+            }
+        },
+    )
+
+    assert entry.time_diff_to_fastest == "+0.086"
+    assert entry.time_diff_to_position_ahead == "+0.071"
+    assert entry.time_diff_to_fastest_segment == "1"
