@@ -20,7 +20,9 @@ title(){ echo; echo -e "${BLUE}== $* ==${NC}"; }
 read_env() {
   local key="$1" default="${2:-}"
   local value
-  value="$(grep -E "^${key}=" "$PROJ/.env" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^ *//;s/ *$//')"
+  # El `tr -d '\r'` evita que un .env con finales CRLF (editado en Windows)
+  # deje un `\r` pegado al final de la URL y curl devuelva 000.
+  value="$(grep -E "^${key}=" "$PROJ/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^ *//;s/ *$//')"
   [ -n "$value" ] && echo "$value" || echo "$default"
 }
 
@@ -198,6 +200,15 @@ except Exception as e:
 " 2>/dev/null
 elif [ "$code" = "404" ]; then
   warn "OpenF1 responde 404 (sin resultados para ese filtro)"
+elif [ "$code" = "401" ]; then
+  # Con una sesion en vivo, OpenF1 bloquea TODO el acceso (incluido el
+  # historico) hasta que la sesion termine, salvo que haya clave de API.
+  # No es un fallo del proyecto: se recupera solo al terminar la carrera.
+  if grep -qi "live f1 session in progress" /tmp/_rc_o1 2>/dev/null; then
+    warn "OpenF1 responde 401: hay una sesion en vivo y OpenF1 exige clave hasta que termine (no es un fallo)"
+  else
+    bad "OpenF1 responde 401 (credencial requerida o invalida)"
+  fi
 else
   bad "OpenF1 responde HTTP $code"
 fi
