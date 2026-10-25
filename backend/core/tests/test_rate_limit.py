@@ -347,3 +347,38 @@ def test_sin_fallos_no_hay_avisos(monkeypatch):
     assert len(payload["positions"]) == 1
     assert payload["positions"][0]["driver_number"] == "44"
     assert payload["sources"]["positions"] == "openf1"
+
+
+# --------------------------------------------------------------------------- #
+# El throttle con peticiones en paralelo
+# --------------------------------------------------------------------------- #
+
+
+def test_el_throttle_espacia_las_peticiones_en_paralelo(monkeypatch):
+    """Varias peticiones a la vez no pueden salir todas pegadas.
+
+    Las posiciones se piden piloto por piloto (22 a la vez). Con el throttle
+    mal escrito, todas calculaban el mismo hueco, dormian lo mismo y salian
+    a la vez: OpenF1 respondia 429 y solo 4 de 22 pilotos quedaban con
+    posicion en el mapa.
+    """
+    monkeypatch.setattr(openf1_module, "MIN_REQUEST_INTERVAL_SECONDS", 0.05)
+    monkeypatch.setattr(openf1_module, "_last_request_at", 0.0)
+    monkeypatch.setattr(openf1_module, "_cooldown_until", 0.0)
+
+    provider = OpenF1Provider(base_url="http://127.0.0.1:9")
+
+    async def pedir():
+        await provider._throttle()
+        return time.monotonic()
+
+    async def main():
+        return await asyncio.gather(*(pedir() for _ in range(5)))
+
+    marcas = asyncio.run(main())
+
+    for anterior, actual in zip(marcas, marcas[1:]):
+        assert actual - anterior >= 0.04, (
+            "dos peticiones salieron pegadas (%.3f s de diferencia): %s"
+            % (actual - anterior, marcas)
+        )

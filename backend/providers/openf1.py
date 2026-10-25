@@ -74,6 +74,10 @@ MAX_ATTEMPTS = 3
 # propio, bastante mas generoso que el del resto de endpoints.
 LOCATION_TIMEOUT_SECONDS = 120.0
 
+# Espera antes de la segunda pasada de las posiciones: el cooldown por
+# limite de tasa ya paso y los drivers que fallaron vuelven a responder.
+RETRY_PASS_DELAY_SECONDS = 5.0
+
 _last_request_at = 0.0
 _cooldown_until = 0.0
 
@@ -201,8 +205,21 @@ class OpenF1Provider(TimingProvider):
 
         wait = (_last_request_at + MIN_REQUEST_INTERVAL_SECONDS) - now
         if wait > 0:
+            # OJO: el turno se reserva **antes** de esperar.
+            #
+            # Con las peticiones en paralelo (las posiciones se piden piloto
+            # por piloto, 22 a la vez), todas calculaban el mismo hueco: leian
+            # el mismo `_last_request_at`, dormian lo mismo y salian todas a la
+            # vez. OpenF1 respondia 429 y solo 4 de 22 pilotos tenían
+            # posición.
+            #
+            # Entre la lectura y esta escritura no hay ningun `await`, asi que
+            # en asyncio la reserva es atomica: cada petición se lleva su
+            # turno y sale espaciada 1 s de la anterior.
+            _last_request_at = now + wait
             await asyncio.sleep(wait)
-        _last_request_at = time.monotonic()
+        else:
+            _last_request_at = now
 
     @staticmethod
     def _retry_after_seconds(response: httpx.Response) -> float | None:
@@ -667,15 +684,42 @@ class OpenF1Provider(TimingProvider):
                 return_exceptions=True,
             )
             filas = []
+            fallidos: list[str] = []
             for numero, respuesta in zip(numeros, respuestas):
                 if isinstance(respuesta, Exception):
                     # Un piloto que falla no debe tirar abajo a los demas.
                     logger.warning("OpenF1: sin posiciones para el piloto %s: %s", numero, respuesta)
+                    fallidos.append(numero)
                     continue
                 for fila in respuesta or []:
                     fila = dict(fila)
                     fila.setdefault("driver_number", numero)
                     filas.append(fila)
+
+            # Segunda pasada para los que se quedaron fuera: la primera suele
+            # chocar con el limite de tasa (429) y, con el cooldown ya
+            # expirado, estos drivers vuelven a responder.
+            if fallidos:
+                logger.info("OpenF1: reintentando las posiciones de %d pilotos", len(fallidos))
+                await asyncio.sleep(RETRY_PASS_DELAY_SECONDS)
+                for numero in fallidos:
+                    try:
+                        respuesta = await self._get_json(
+                            "/location",
+                            {"session_key": key, "driver_number": numero},
+                            timeout=LOCATION_TIMEOUT_SECONDS,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "OpenF1: sin posiciones para el piloto %s (2a pasada): %s",
+                            numero,
+                            exc,
+                        )
+                        continue
+                    for fila in respuesta or []:
+                        fila = dict(fila)
+                        fila.setdefault("driver_number", numero)
+                        filas.append(fila)
 
         ultima: dict[str, dict[str, Any]] = {}
         for fila in filas:

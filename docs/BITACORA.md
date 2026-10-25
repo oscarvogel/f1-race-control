@@ -446,7 +446,7 @@ sistema, no por lectura de código.
 | 38 | Ordenar la clasificación por neumático rompía la tabla | En `ClassificationTable.vue` la función de ordenamiento llamaba `compoundOf(a)`, pero `a` no existe en ese ámbito (la entrada se llama `entry`) | `compoundOf(entry)`. Era un `ReferenceError` en vivo: solo se veía al ordenar por neumático |
 | 39 | En el sitio desplegado, la **clasificación final** no cargaba ("must be real number, not NoneType") | OpenF1 devolvió `gap_to_leader` vacío o nulo para varios pilotos de la quali de Austin; el formato `"+%.3f" % None` reventaba y tumbaba **todo** el snapshot histórico de la sesión | Se comprueba que el gap sea numérico antes de formatearlo: sin dato, el gap queda en `None` (se dibuja "—", nunca `+0.000`). En local no se veía porque el snapshot ya estaba cacheado en la base |
 | 40 | `supervisorctl status` no hablaba con el socket | Faltaba la sección `[rpcinterface:supervisor]` en `deploy/supervisord.conf` | Se agregó. Los procesos always corrieron; era solo el comando de consulta el que no respondía |
-
+| 41 | En el mapa del replay salían **4 autos de 22** | El throttle de OpenF1 leía `_last_request_at` y lo actualizaba **después** del `await`: las 22 peticiones en paralelo calculaban el mismo hueco, dormían lo mismo y salían todas a la vez → 429 en 18 de ellas | El turno se reserva **antes** de esperar (sin `await` entre la lectura y la escritura, es atómico en asyncio) y hay una segunda pasada para los drivers que fallan. Medido: de 4 a 20-22 posiciones |
 ### Entorno
 
 | # | Bug | Cómo se resolvió |
