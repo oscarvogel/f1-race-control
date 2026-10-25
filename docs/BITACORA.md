@@ -1284,3 +1284,18 @@ autenticacion. Ahora el panel explica lo que de verdad falta.
   suscripcion F1TV activa el login puede funcionar, pero el feed sigue
   entregando **401** a los canales de coordenadas: el limite es del feed, no
   del codigo.
+
+### Publicacion
+
+- Rama: `feature/sesion-en-vivo-austin-2026`.
+- PR **#3** -> merge a `main`, commit `ea092f8`
+  ("Merge pull request #3 from oscarvogel/feature/sesion-en-vivo-austin-2026").
+- El merge **no** dispara un deploy por webhook: la app quedo con el bundle
+  anterior. El deploy se disparo a mano con `POST /api/v1/applications/<uuid>/start`
+  (`/deploy` devuelve **404** en esta version de la API), que encola el
+  despliegue `zobpqodgk56iczi8uut6547p` con el commit `ea092f8`.
+- Verificacion del deploy: el bundle servido paso de `index-B0-OjqEx.js` a
+  `index-DOzq0QYP.js` y ya trae el mensaje nuevo del mapa;
+  `https://race-center.186-5-245-12.sslip.io/api/ping/` responde 200
+  (contenedor sano) y `/api/health/` responde 401, que es el login de la
+  propia aplicacion funcionando.
