@@ -55,7 +55,11 @@ DERIVED_PROVIDER = "race-center-analysis"
 # Version de los datos derivados guardados. Se sube cuando cambia el formato
 # (por ejemplo, la edad del neumatico o el equipo de cada piloto): si no, la
 # base seguiria sirviendo el payload viejo durante la hora de cache.
-CACHE_VERSION = "v2"
+#
+# v3: la vuelta que se analiza es la que cuenta para la clasificacion (el
+# tiempo del ultimo segmento alcanzado), no la mas rapida registrada. Antes
+# el analisis podia mostrar una vuelta anulada por la federacion.
+CACHE_VERSION = "v3"
 
 _RAW_CACHE: dict[str, dict[str, Any]] = {}
 _CHAMPIONSHIP_CACHE: dict[str, dict[str, Any]] = {}

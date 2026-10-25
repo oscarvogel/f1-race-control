@@ -447,6 +447,10 @@ sistema, no por lectura de código.
 | 39 | En el sitio desplegado, la **clasificación final** no cargaba ("must be real number, not NoneType") | OpenF1 devolvió `gap_to_leader` vacío o nulo para varios pilotos de la quali de Austin; el formato `"+%.3f" % None` reventaba y tumbaba **todo** el snapshot histórico de la sesión | Se comprueba que el gap sea numérico antes de formatearlo: sin dato, el gap queda en `None` (se dibuja "—", nunca `+0.000`). En local no se veía porque el snapshot ya estaba cacheado en la base |
 | 40 | `supervisorctl status` no hablaba con el socket | Faltaba la sección `[rpcinterface:supervisor]` en `deploy/supervisord.conf` | Se agregó. Los procesos always corrieron; era solo el comando de consulta el que no respondía |
 | 41 | En el mapa del replay salían **4 autos de 22** | El throttle de OpenF1 leía `_last_request_at` y lo actualizaba **después** del `await`: las 22 peticiones en paralelo calculaban el mismo hueco, dormían lo mismo y salían todas a la vez → 429 en 18 de ellas | El turno se reserva **antes** de esperar (sin `await` entre la lectura y la escritura, es atómico en asyncio) y hay una segunda pasada para los drivers que fallan. Medido: de 4 a 20-22 posiciones |
+| 42 | **La columna MEJOR VUELTA mostraba un tiempo que no existe en la clasificación oficial** | Se tomaba la vuelta más rápida de `/laps`. En una eliminatoria el piloto se clasifica con el tiempo del **último segmento alcanzado** (Q3 si llegó, si no Q2, si no Q1), y OpenF1 **ya no marca las vueltas anuladas** por la federación (el campo `deleted` desapareció de los datos de 2026): la vuelta más rápida de `/laps` puede ser una anulada | El tiempo de clasificación sale de `/session_result` (`duration`, que en eliminatorias es la lista de Q1/Q2/Q3) y se toma el del último segmento con dato; los sectores son los de la vuelta que tiene **ese** tiempo exacto. En el live se prefiere el `BestLapTime` que publica el feed (que es el tiempo de clasificación) en vez del mínimo entre segmentos |
+| 43 | Las columnas Q1/Q2/Q3 salían **vacías en vivo** | El feed entrega `BestLapTimes` como **lista** (`[{...}, {...}, {...}]`) y el normalizador solo entendía el mapa por índice (`{"0": ...}`) | `_best_lap_times_items()` soporta las dos formas y respeta la clave del mapa: si falta un segmento, los que quedan no se corren de lugar |
+| 44 | El GAP histórico quedaba en "—" en la clasificación | En una eliminatoria `gap_to_leader` también es una **lista** (una diferencia por segmento) y el código solo leía un escalar | El gap es el del segmento que cuenta, el mismo del tiempo de clasificación |
+| 45 | El panel de Análisis seguía mostrando la vuelta anulada | El análisis guarda los datos crudos de cada sesión en la base con una versión (`v2`) para no volver a descargarlos | Se sube a `v3`: la cache se rehace con la vuelta que cuenta para la clasificación |
 ### Entorno
 
 | # | Bug | Cómo se resolvió |
@@ -820,12 +824,86 @@ GET /api/championship/?season=<año>
 
 Los datos crudos de cada sesión (mejor vuelta por piloto + ficha de pilotos) y
 el campeonato se cachean **en memoria y en la base** (una sesión terminada no
-cambia). La clave de la cache lleva una versión (`v2`): al cambiar el formato
+cambia). La clave de la cache lleva una versión (`v3`): al cambiar el formato
 del payload, la base no sigue sirviendo el viejo.
 
 ---
 
-## 16. Cómo seguir
+## 16. Verificación LIVE de la clasificación (quali de Austin 2026)
+
+**Veredicto: `LIVE_VERIFIED`.**
+
+Se comprobó el feed en vivo de la clasificación de la quali (`session_key`
+11392, United States Grand Prix, Austin, 24/10/2026) contra la fuente oficial,
+piloto por piloto.
+
+### Cómo se verificó
+
+Dos fuentes **independientes** y el snapshot que sirve la app:
+
+| Fuente | Qué trae |
+|---|---|
+| Feed en vivo (proveedor Node, `/api/standings`) | `Lines` con la posición y `BestLapTimes` (un mejor tiempo por segmento) |
+| OpenF1 `/session_result` (oficial) | `position` y `duration` = lista con el tiempo de Q1, Q2 y Q3 |
+| App (`/api/sessions/historical/11392/`) | El snapshot que ve el usuario |
+
+Se compararon posición y los tres tiempos por segmento. **22 de 22 pilotos
+coinciden en las tres fuentes**, y también el gap.
+
+```
+pos  nº   piloto             live Q1/Q2/Q3          oficial Q1/Q2/Q3       estado
+1    12   Kimi ANTONELLI     95.390/94.278/94.035   95.390/94.278/94.035   OK
+4    16   Charles LECLERC    95.200/94.198/94.267   95.200/94.198/94.267   OK
+8    1    Lando NORRIS       95.029/94.539/95.049   95.029/94.539/95.049   OK
+9    41   Arvid LINDBLAD     95.755/94.950/96.049   95.755/94.950/96.049   OK
+10   30   Liam LAWSON        95.662/95.058          95.662/95.058          OK
+...
+  posiciones coincidentes      : 22/22
+  tiempos por segmento iguales  : 22/22
+```
+
+### Evidencia de la sesión en vivo
+
+- `.run/logs/live-evidence.log`: 4100 líneas, **61 cambios detectados** en el
+  feed durante la sesión; el último, a las 21:51:32Z, con
+  `lider=12|1:34.035|23` (ANTONELLI toma P1 en Q3).
+- Proveedor live: `status: CONNECTED`.
+- Sesión en el feed: `Finalised`, 22 pilotos, P1 ANTONELLI 1:34.035.
+
+### Lo que destapó la verificación
+
+Al contrastar los tiempos **por segmento** se vio que la app no estaba
+mostrando el tiempo con el que se clasifica, sino el más rápido de la sesión
+(bugs 42, 43 y 44). En la clasificación de Austin:
+
+- **Leclerc** se clasifica con **1:34.267** (Q3), aunque su mejor vuelta fue
+  1:34.198 en Q2: la de Q2 ya no cuenta.
+- **Norris** se clasifica con **1:35.049** (Q3). `/laps` tiene una vuelta de
+  1:34.379 que la federación **anuló**; OpenF1 ya no la marca (`deleted`
+  desapareció de los datos de 2026), así que tomar la vuelta más rápida daba un
+  tiempo que no existe en la clasificación oficial.
+- **Lindblad** (Q3, 1:36.049) quedó **P9 por delante de Lawson** (Q2,
+  1:35.058, P10): en una eliminatoria los eliminados van detrás de los que
+  llegaron más lejos, aunque su tiempo sea mejor.
+
+Corregido, reconstruido el snapshot (`v3`) y vuelto a cuadrar: **22/22**.
+
+> Confirmación del propio feed: el control de carrera de la sesión registra
+> `CAR 1 (NOR) TIME 1:34.379 DELETED - TRACK LIMITS AT TURN 19 LAP 15`, o sea
+> que la vuelta que tomaba `/laps` como "mejor vuelta" fue anulada por la
+> federación. También aparecen anuladas la 1:34.363 de Hadjar, la 1:34.482 de
+> Verstappen, la 1:35.592 de Bearman y la 1:35.632 de Bortoleto.
+
+### Lo que NO se pudo verificar
+
+Las **posiciones de los autos en pista**: el canal `CarData` y el de
+`Positions` del feed llegan vacíos (`Cars: 0`) una vez que la sesión terminó y
+los autos están en el garage. El mapa del replay se alimenta de las
+coordenadas GPS del histórico (OpenF1 `/location`), no del feed en vivo.
+
+---
+
+## 17. Cómo seguir
 
 ```bash
 cd /mnt/c/Programacion/proyectos/actives/f1-race-center
